@@ -1,0 +1,284 @@
+"""The local WebSocket bridge the desktop shell connects to.
+
+Bound to loopback and gated on a shared token that is generated on first run and
+handed to the shell through a runtime descriptor file. That combination stops
+any other process on the machine — or a page in a stray browser — from driving
+the assistant.
+
+Bus events are mirrored to every connected client. High-frequency topics
+(audio level, metrics) are coalesced to a fixed rate so a 60 FPS UI never gets
+back-pressured by a 100 Hz producer.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import json
+import os
+import sys
+import time
+from typing import Any
+
+from ..context import NovaContext
+from ..runtime import Service, Topics
+from ..runtime.errors import ConfirmationRequired, NovaError
+from .protocol import Kind, Message
+from .router import RequestRouter
+
+try:
+    import websockets
+    from websockets.asyncio.server import ServerConnection, serve
+except ImportError:  # pragma: no cover - hard dependency, guarded for clarity
+    websockets = None  # type: ignore[assignment]
+    ServerConnection = Any  # type: ignore[misc,assignment]
+    serve = None  # type: ignore[assignment]
+
+
+#: Topics never forwarded to the UI — internal plumbing or secrets.
+_PRIVATE_PREFIXES = ("internal.", "secret.")
+
+#: Topics coalesced to at most one message per interval (seconds).
+_THROTTLE: dict[str, float] = {
+    Topics.AUDIO_LEVEL: 1 / 30,
+    Topics.METRICS: 1.0,
+}
+
+
+class BridgeService(Service):
+    """Serves the UI protocol over ws://127.0.0.1."""
+
+    name = "transport"
+    critical = True
+
+    def __init__(self, ctx: NovaContext, router: RequestRouter) -> None:
+        super().__init__(ctx)
+        self.router = router
+        self._clients: set[ServerConnection] = set()
+        self._server: Any = None
+        self._last_sent: dict[str, float] = {}
+        self._pending_confirmations: dict[str, ConfirmationRequired] = {}
+        self._bound_port: int = 0
+        #: In-flight broadcast sends, held so they are not garbage collected.
+        self._send_tasks: set[asyncio.Task[None]] = set()
+
+    # -------------------------------------------------------------- lifecycle
+
+    async def on_start(self) -> None:
+        if serve is None:  # pragma: no cover
+            raise NovaError("the 'websockets' package is required to run the bridge")
+
+        cfg = self.ctx.settings.transport
+        self._server = await serve(
+            self._handle_client,
+            cfg.host,
+            cfg.port,
+            ping_interval=20,
+            ping_timeout=20,
+            max_size=8 * 1024 * 1024,  # room for a base64 screenshot
+            compression=None,  # loopback; compression costs more than it saves
+        )
+        self._bound_port = _bound_port(self._server, cfg.port)
+        self._write_runtime_descriptor()
+        self.bus.subscribe("*", self._forward_event)
+        self.log.info("bridge_listening", host=cfg.host, port=self._bound_port)
+
+    async def on_stop(self) -> None:
+        for client in tuple(self._clients):
+            with contextlib.suppress(Exception):
+                await client.close()
+        self._clients.clear()
+        if self._server is not None:
+            self._server.close()
+            with contextlib.suppress(Exception):
+                await self._server.wait_closed()
+        with contextlib.suppress(OSError):
+            self._descriptor_path.unlink(missing_ok=True)
+
+    def describe(self) -> str:
+        host = self.ctx.settings.transport.host
+        return f"{host}:{self._bound_port} · {len(self._clients)} client(s)"
+
+    # ------------------------------------------------------------- descriptor
+
+    @property
+    def _descriptor_path(self):  # type: ignore[no-untyped-def]
+        return self.ctx.paths.data_dir / "bridge.json"
+
+    def _write_runtime_descriptor(self) -> None:
+        """Publish connection details for the shell to pick up.
+
+        Written to the data dir (0600) *and* echoed on stdout, so the shell works
+        whether it spawned the core as a child process or attached to one that
+        was already running as a system service.
+        """
+        cfg = self.ctx.settings.transport
+        descriptor = {
+            "host": cfg.host,
+            "port": self._bound_port,
+            "token": cfg.token,
+            "pid": os.getpid(),
+            "version": 1,
+            "startedAt": time.time(),
+        }
+        path = self._descriptor_path
+        try:
+            path.write_text(json.dumps(descriptor), encoding="utf-8")
+            if sys.platform != "win32":
+                path.chmod(0o600)
+        except OSError as exc:
+            self.log.warning("descriptor_write_failed", error=str(exc))
+        # Consumed by the Electron main process when it spawns us.
+        print(f"NOVA_BRIDGE_READY {json.dumps(descriptor)}", flush=True)
+
+    # ---------------------------------------------------------------- clients
+
+    async def _handle_client(self, connection: ServerConnection) -> None:
+        if not self._authorised(connection):
+            await connection.close(code=4401, reason="unauthorised")
+            self.log.warning("bridge_unauthorised", peer=str(connection.remote_address))
+            return
+
+        self._clients.add(connection)
+        self.log.info("ui_connected", clients=len(self._clients))
+        try:
+            await self._send(connection, self._hello_message())
+            async for raw in connection:
+                await self._on_message(connection, raw)
+        except Exception as exc:  # noqa: BLE001 - connection teardown is expected
+            if websockets and not isinstance(exc, websockets.exceptions.ConnectionClosed):
+                self.log.warning("ui_connection_error", error=str(exc))
+        finally:
+            self._clients.discard(connection)
+            self.log.info("ui_disconnected", clients=len(self._clients))
+
+    def _authorised(self, connection: ServerConnection) -> bool:
+        expected = self.ctx.settings.transport.token
+        if not expected:
+            return True
+        # Token arrives as ?token=… ; the shell reads it from the descriptor file.
+        _, _, query = str(connection.request.path).partition("?")
+        for part in query.split("&"):
+            key, _, value = part.partition("=")
+            if key == "token":
+                return _constant_time_equals(value, expected)
+        header = connection.request.headers.get("Authorization", "")
+        if header.startswith("Bearer "):
+            return _constant_time_equals(header[7:], expected)
+        return False
+
+    def _hello_message(self) -> Message:
+        return Message(
+            Kind.HELLO,
+            "hello",
+            {
+                "service": "nova-core",
+                "version": "3.0.0",
+                "state": self.ctx.state.state.value,
+                "routes": self.router.topics,
+                "capabilities": self.ctx.services.health_report(),
+            },
+        )
+
+    # --------------------------------------------------------------- requests
+
+    async def _on_message(self, connection: ServerConnection, raw: str | bytes) -> None:
+        try:
+            message = Message.decode(raw)
+        except (ValueError, json.JSONDecodeError) as exc:
+            await self._send(connection, Message.error("", "protocol", "nova.protocol", str(exc)))
+            return
+
+        if message.kind is not Kind.REQUEST:
+            return
+
+        handler = self.router.get(message.topic)
+        if handler is None:
+            await self._send(
+                connection,
+                Message.error(
+                    message.id, message.topic, "nova.unknown_route", f"no route '{message.topic}'"
+                ),
+            )
+            return
+
+        if self.ctx.settings.developer.trace_tool_calls:
+            self.log.debug("ui_request", topic=message.topic)
+
+        try:
+            result = await handler(message.payload)
+            await self._send(connection, Message.response(message.id, message.topic, result))
+        except ConfirmationRequired as exc:
+            self._pending_confirmations[exc.token] = exc
+            await self._send(
+                connection,
+                Message.error(message.id, message.topic, exc.code, exc.message, **exc.as_payload()),
+            )
+        except NovaError as exc:
+            await self._send(
+                connection, Message.error(message.id, message.topic, exc.code, exc.message)
+            )
+        except Exception as exc:
+            self.log.exception("request_handler_failed", topic=message.topic)
+            await self._send(
+                connection, Message.error(message.id, message.topic, "nova.internal", str(exc))
+            )
+
+    # ----------------------------------------------------------------- events
+
+    def _forward_event(self, event: Any) -> None:
+        topic: str = event.topic
+        if topic.startswith(_PRIVATE_PREFIXES):
+            return
+        interval = _THROTTLE.get(topic)
+        if interval is not None:
+            now = time.monotonic()
+            if now - self._last_sent.get(topic, 0.0) < interval:
+                return
+            self._last_sent[topic] = now
+        self.broadcast(Message.event(topic, event.payload))
+
+    def broadcast(self, message: Message) -> None:
+        if not self._clients:
+            return
+        encoded = message.encode()
+        for client in tuple(self._clients):
+            # Hold a reference until the send completes; a task that only the
+            # event loop knows about can be garbage collected mid-flight.
+            task = asyncio.create_task(self._send_raw(client, encoded))
+            self._send_tasks.add(task)
+            task.add_done_callback(self._send_tasks.discard)
+
+    async def _send(self, connection: ServerConnection, message: Message) -> None:
+        await self._send_raw(connection, message.encode())
+
+    async def _send_raw(self, connection: ServerConnection, encoded: str) -> None:
+        try:
+            await connection.send(encoded)
+        except Exception:  # noqa: BLE001 - client vanished mid-send
+            self._clients.discard(connection)
+
+    # ---------------------------------------------------------- confirmations
+
+    def stash_confirmation(self, request: ConfirmationRequired) -> None:
+        self._pending_confirmations[request.token] = request
+
+    def take_confirmation(self, token: str) -> ConfirmationRequired | None:
+        return self._pending_confirmations.pop(token, None)
+
+    @property
+    def client_count(self) -> int:
+        return len(self._clients)
+
+
+def _bound_port(server: Any, fallback: int) -> int:
+    with contextlib.suppress(Exception):
+        for sock in server.sockets:
+            return int(sock.getsockname()[1])
+    return fallback
+
+
+def _constant_time_equals(a: str, b: str) -> bool:
+    import hmac
+
+    return hmac.compare_digest(a, b)

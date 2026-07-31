@@ -1,0 +1,45 @@
+# ---- Node / Electron ----
+node_modules/
+dist/
+dist-electron/
+release/
+out/
+*.tsbuildinfo
+.vite/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ---- NOVA runtime state ----
+# Models are large binaries fetched by scripts/fetch-models.py
+models/
+*.onnx
+*.bin
+!**/placeholder.bin
+
+# Local user data (never commit — contains API keys + memory)
+.nova/
+*.db
+*.db-wal
+*.db-shm
+config.local.toml
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log

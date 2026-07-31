@@ -1,0 +1,107 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nova-core"
+version = "3.0.0"
+description = "N.O.V.A. — local-first assistant core service"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+# Base install: the runtime, transport, memory, skills and integrations.
+# Heavy ML/audio wheels live behind extras so the core starts on any machine.
+dependencies = [
+  "pydantic>=2.7,<3",
+  "pydantic-settings>=2.3,<3",
+  "websockets>=12.0,<16",
+  "httpx>=0.27,<1",
+  "tomlkit>=0.12,<1",
+  "psutil>=5.9",
+  "python-dateutil>=2.9",
+  "structlog>=24.1",
+]
+
+[project.optional-dependencies]
+# Local voice stack — wake word, transcription, synthesis.
+voice = [
+  "sounddevice>=0.4.6",
+  "numpy>=1.26,<3",
+  "openwakeword>=0.6.0",
+  "faster-whisper>=1.0.3",
+  "webrtcvad>=2.0.10",
+  "kokoro-onnx>=0.4.0",
+  "onnxruntime>=1.18",
+]
+# Cloud reasoning (the one permitted paid dependency).
+ai = [
+  "openai>=1.40,<3",
+]
+# Semantic memory recall. Without it memory falls back to SQLite FTS5.
+embeddings = [
+  "numpy>=1.26,<3",
+  "sentence-transformers>=3.0",
+]
+# Home automation + home lab.
+home = [
+  "paho-mqtt>=2.0",
+  "caldav>=1.3",
+  "icalendar>=5.0",
+]
+# Server administration.
+server = [
+  "docker>=7.1",
+]
+# Vision: screen + camera capture.
+vision = [
+  "mss>=9.0",
+  "opencv-python-headless>=4.9",
+  "pillow>=10.3",
+]
+dev = [
+  "pytest>=8.2",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.5",
+  "mypy>=1.10",
+]
+
+[project.scripts]
+nova-core = "nova.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["nova"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "BLE", "ASYNC", "C4", "PIE"]
+# B008: FastAPI-style defaults; we use Field(...) defaults deliberately.
+# BLE001 is selected so every broad `except Exception` must justify itself
+# with an inline noqa explaining why failure there is non-fatal.
+ignore = [
+  "B008",     # Field(...) defaults are the pydantic idiom.
+  "B024",     # Service is an ABC whose hooks are deliberately optional.
+  "B027",     # …which is exactly why on_start/on_stop are empty, not abstract.
+  "ASYNC109", # `timeout` parameters mirror asyncio.wait_for; they are public API.
+  "RUF001",   # En dashes and middots are intentional typography in UI strings.
+  "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into registry internals to bypass plugin discovery.
+"tests/*" = ["SLF001", "BLE001", "RUF006", "ASYNC110"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+plugins = []
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
