@@ -179,14 +179,20 @@ const TAU = Math.PI * 2;
  * as a flat target symbol: at any instant the rings are at different angles to
  * each other, so the eye reconstructs depth.
  */
+// Thicknesses are in true screen units. They were raised when `ringField` was
+// corrected to measure real distance — the old anisotropic metric was inflating
+// every line by 1/tilt, so these values look about right on screen rather than
+// about right on paper.
 export const RINGS: RingDefinition[] = [
-  { radius: 0.17, thickness: 0.0022, tilt: 0.95, speed: 0.9, brightness: 0.9, arcStart: 0, arcLength: TAU, dashes: 0 },
-  { radius: 0.215, thickness: 0.0016, tilt: 0.42, speed: -1.35, brightness: 1.05, arcStart: 0.4, arcLength: TAU * 0.72, dashes: 0 },
-  { radius: 0.26, thickness: 0.0026, tilt: 0.78, speed: 0.55, brightness: 0.8, arcStart: 0, arcLength: TAU, dashes: 42 },
-  { radius: 0.315, thickness: 0.0014, tilt: 0.3, speed: -0.7, brightness: 0.95, arcStart: 2.1, arcLength: TAU * 0.45, dashes: 0 },
-  { radius: 0.355, thickness: 0.0011, tilt: 0.88, speed: 0.32, brightness: 0.55, arcStart: 0, arcLength: TAU, dashes: 96 },
-  { radius: 0.42, thickness: 0.0019, tilt: 0.55, speed: -0.24, brightness: 0.65, arcStart: 4.0, arcLength: TAU * 0.6, dashes: 0 },
-  { radius: 0.48, thickness: 0.0009, tilt: 0.72, speed: 0.16, brightness: 0.4, arcStart: 0, arcLength: TAU, dashes: 0 },
+  { radius: 0.17, thickness: 0.0032, tilt: 0.95, speed: 0.9, brightness: 0.9, arcStart: 0, arcLength: TAU, dashes: 0 },
+  { radius: 0.215, thickness: 0.0024, tilt: 0.42, speed: -1.35, brightness: 1.05, arcStart: 0.4, arcLength: TAU * 0.72, dashes: 0 },
+  { radius: 0.26, thickness: 0.0038, tilt: 0.78, speed: 0.55, brightness: 0.8, arcStart: 0, arcLength: TAU, dashes: 42 },
+  { radius: 0.315, thickness: 0.0021, tilt: 0.3, speed: -0.7, brightness: 0.95, arcStart: 2.1, arcLength: TAU * 0.45, dashes: 0 },
+  // 96 dashes at this radius sat close to the pixel grid and shimmered; 64 is
+  // comfortably above it at every quality tier.
+  { radius: 0.355, thickness: 0.0016, tilt: 0.88, speed: 0.32, brightness: 0.55, arcStart: 0, arcLength: TAU, dashes: 64 },
+  { radius: 0.42, thickness: 0.0028, tilt: 0.55, speed: -0.24, brightness: 0.65, arcStart: 4.0, arcLength: TAU * 0.6, dashes: 0 },
+  { radius: 0.48, thickness: 0.0014, tilt: 0.72, speed: 0.16, brightness: 0.4, arcStart: 0, arcLength: TAU, dashes: 0 },
 ];
 
 export interface Palette {

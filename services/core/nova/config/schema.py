@@ -97,7 +97,8 @@ class AppearanceSettings(BaseModel):
     animation_quality: AnimationQuality = "high"
     gpu_acceleration: bool = True
     clock_24_hour: bool = True
-    show_seconds: bool = False
+    #: The corner readout is designed around a visible seconds tick.
+    show_seconds: bool = True
     show_date: bool = True
     core_scale: float = Field(default=1.0, ge=0.5, le=1.6)
     bloom_intensity: float = Field(default=1.0, ge=0.0, le=2.0)

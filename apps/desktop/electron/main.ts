@@ -243,24 +243,48 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
+/**
+ * Register only the shortcuts that must work when the window is NOT focused.
+ *
+ * A global shortcut is consumed system-wide: the key never reaches the web
+ * contents. Registering the settings and console keys here therefore *prevented*
+ * the renderer's own handler from ever seeing them — they were swallowed by the
+ * main process and forwarded over IPC, which is a strictly worse path because it
+ * fails silently if anything upstream is wrong.
+ *
+ * So: push-to-talk and quit are global, because you may want them while another
+ * application has focus. Everything else is handled in the renderer, where the
+ * key actually arrives and nothing can intercept it.
+ */
 function registerShortcuts(window: BrowserWindow): void {
   const bindings: Record<string, () => void> = {
-    // Escape hatches: a kiosk window with no chrome needs a way out.
     'CommandOrControl+Shift+Q': () => app.quit(),
-    'CommandOrControl+Shift+F': () => window.setFullScreen(!window.isFullScreen()),
-    'CommandOrControl+Shift+I': () => window.webContents.toggleDevTools(),
-    'CommandOrControl+Shift+R': () => window.reload(),
-    // Push-to-talk, for when the wake word is disabled or the room is loud.
     'CommandOrControl+Shift+Space': () => window.webContents.send('nova:activate-voice'),
-    'CommandOrControl+,': () => window.webContents.send('nova:toggle-settings'),
-    'CommandOrControl+Shift+K': () => window.webContents.send('nova:toggle-console'),
   };
 
   for (const [accelerator, handler] of Object.entries(bindings)) {
     if (!globalShortcut.register(accelerator, handler)) {
-      console.warn(`[nova] shortcut unavailable: ${accelerator}`);
+      console.warn(`[nova] global shortcut unavailable: ${accelerator}`);
     }
   }
+
+  // Window-level keys, handled before the page sees them. These work regardless
+  // of what the desktop environment has claimed globally.
+  window.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+    const modifier = input.control || input.meta;
+
+    if (input.key === 'F11' || (modifier && input.shift && input.key.toLowerCase() === 'f')) {
+      window.setFullScreen(!window.isFullScreen());
+      event.preventDefault();
+    } else if (input.key === 'F12' || (modifier && input.shift && input.key.toLowerCase() === 'i')) {
+      window.webContents.toggleDevTools();
+      event.preventDefault();
+    } else if (modifier && input.shift && input.key.toLowerCase() === 'r') {
+      window.reload();
+      event.preventDefault();
+    }
+  });
 }
 
 // ----------------------------------------------------------------------- ipc

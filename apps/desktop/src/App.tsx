@@ -63,17 +63,25 @@ export function App(): JSX.Element {
 
     const onKey = (event: KeyboardEvent) => {
       const modifier = event.ctrlKey || event.metaKey;
-      if (modifier && event.shiftKey && event.code === 'Space') {
-        event.preventDefault();
-        activateVoice();
-      } else if (modifier && event.key === ',') {
+      const typing =
+        event.target instanceof HTMLElement &&
+        ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName);
+
+      // F1 is the primary way in: a single key, and one that desktop
+      // environments almost never claim. Ctrl+, is kept because it is the
+      // convention, but it is no longer the only route.
+      if (event.key === 'F1' || (modifier && event.key === ',')) {
         event.preventDefault();
         toggleSettings();
-      } else if (modifier && event.shiftKey && event.key.toLowerCase() === 'k') {
+      } else if (event.key === 'F2' || (modifier && event.shiftKey && event.key.toLowerCase() === 'k')) {
         event.preventDefault();
         toggleConsole();
-      } else if (event.key === 'Escape') {
-        // Escape always means "stop what you are doing".
+      } else if (modifier && event.shiftKey && event.code === 'Space') {
+        event.preventDefault();
+        activateVoice();
+      } else if (event.key === 'Escape' && !typing) {
+        // Escape always means "stop what you are doing" — but not while the
+        // user is mid-sentence in the console, where it closes the console.
         clientRef.current?.request(Requests.VoiceCancel).catch(() => undefined);
       }
     };

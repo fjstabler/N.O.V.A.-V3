@@ -105,14 +105,35 @@ const float TAU = 6.28318530718;
 
 ${NOISE}
 
-/** Signed distance to an ellipse-flattened, rotated annulus. */
+/**
+ * Distance to a tilted, rotated ring, measured in screen space.
+ *
+ * The obvious implementation — divide y by the tilt, then take
+ * length(q) - radius — measures in the squashed space instead, leaving the
+ * metric anisotropic. Line width and glow then stretch vertically by 1/tilt, so
+ * a ring tilted to 0.3 blooms three times as far above and below as it does to
+ * the sides, and the assembly reads as an egg rather than a set of circles seen
+ * at an angle.
+ *
+ * This is the gradient-normalised ellipse approximation: k0 is the implicit
+ * value, k1 the gradient magnitude, and dividing one by the other converts
+ * back to true distance. Uniform width and glow in every direction.
+ */
 float ringField(vec2 p, float radius, float tiltCos, float rotation, out float angle) {
   float s = sin(rotation);
   float c = cos(rotation);
   vec2 q = mat2(c, -s, s, c) * p;
-  q.y /= max(tiltCos, 0.04);
-  angle = atan(q.y, q.x);
-  return abs(length(q) - radius);
+
+  float tilt = max(tiltCos, 0.04);
+  vec2 ab = vec2(radius, max(radius * tilt, 1e-4));
+
+  // Angle stays in the squashed space: arcs and dashes should be spaced evenly
+  // around the ring's own parameter, not around the on-screen ellipse.
+  angle = atan(q.y / tilt, q.x);
+
+  float k0 = length(q / ab);
+  float k1 = length(q / (ab * ab));
+  return abs(k0 * (k0 - 1.0) / max(k1, 1e-6));
 }
 
 /** Depth cue: points on the far side of a tilted ring sit further away. */
