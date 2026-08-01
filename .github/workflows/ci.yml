@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  protocol:
+    name: Protocol parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # The Python and TypeScript protocol definitions are declared separately;
+      # this is the check that stops them drifting apart silently.
+      - run: python scripts/check_protocol.py
+
+  core:
+    name: Core service
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # Base install only. The voice extras pull multi-hundred-megabyte ML
+      # wheels, and the code is written to degrade without them — which the
+      # test suite verifies.
+      - run: pip install -e "services/core[dev]"
+
+      - name: Lint
+        run: |
+          ruff check services/core/nova services/core/tests
+          ruff format --check services/core/nova services/core/tests
+
+      - name: Test
+        run: pytest services/core/tests -q
+
+      - name: Boot smoke test
+        # Proves the service graph starts, degrades cleanly with no optional
+        # dependencies installed, and shuts down on a signal.
+        env:
+          NOVA_HOME: ${{ runner.temp }}/nova
+        run: |
+          timeout -s INT 25 python -m nova > boot.log 2>&1 || true
+          cat boot.log
+          grep -q "nova_ready" boot.log
+          grep -q "nova_stopped" boot.log
+
+  desktop:
+    name: Desktop shell
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build

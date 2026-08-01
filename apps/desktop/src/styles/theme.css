@@ -1,0 +1,95 @@
+/*
+ * Themes.
+ *
+ * Colour lives here and nowhere else. Each theme sets an accent ramp and the
+ * surface tints derived from it, so a new theme is one block of custom
+ * properties — components never name a colour.
+ *
+ * The palettes mirror `PALETTES` in `src/core/visual.ts`, which the Core
+ * renderer reads; keeping them side by side is what stops the interface and the
+ * Core drifting into two different-looking applications.
+ */
+
+:root {
+  /* Neutral scaffolding, shared by every theme. */
+  --bg-void: #04060d;
+  --bg-deep: #070b16;
+
+  --text-primary: rgba(233, 240, 255, 0.96);
+  --text-secondary: rgba(190, 205, 232, 0.72);
+  --text-tertiary: rgba(150, 170, 205, 0.5);
+
+  --surface: rgba(12, 18, 33, 0.72);
+  --surface-raised: rgba(18, 26, 44, 0.86);
+  --surface-border: rgba(120, 165, 235, 0.14);
+  --surface-border-strong: rgba(130, 180, 255, 0.26);
+
+  --success: #46d6a0;
+  --warning: #f5b544;
+  --danger: #ff5b52;
+
+  /* Motion. One easing for everything that moves, so the app has a single
+     physical character rather than a different feel per component. */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --duration-fast: 160ms;
+  --duration: 280ms;
+  --duration-slow: 480ms;
+
+  --radius: 14px;
+  --radius-sm: 9px;
+
+  /* Default accent, overridden per theme below. */
+  --accent: #3d94ff;
+  --accent-alt: #73dbff;
+  --accent-soft: rgba(61, 148, 255, 0.14);
+  --accent-glow: rgba(61, 148, 255, 0.4);
+}
+
+:root[data-theme='nova-blue'] {
+  --accent: #3d94ff;
+  --accent-alt: #73dbff;
+  --accent-soft: rgba(61, 148, 255, 0.14);
+  --accent-glow: rgba(61, 148, 255, 0.42);
+  --bg-void: #04060d;
+}
+
+:root[data-theme='arc-cyan'] {
+  --accent: #1ad4dc;
+  --accent-alt: #8cffea;
+  --accent-soft: rgba(26, 212, 220, 0.14);
+  --accent-glow: rgba(26, 212, 220, 0.42);
+  --bg-void: #030b0e;
+}
+
+:root[data-theme='ember'] {
+  --accent: #ff7629;
+  --accent-alt: #ffc75c;
+  --accent-soft: rgba(255, 118, 41, 0.14);
+  --accent-glow: rgba(255, 118, 41, 0.4);
+  --bg-void: #0c0603;
+}
+
+:root[data-theme='monochrome'] {
+  --accent: #9eadc4;
+  --accent-alt: #eaf0ff;
+  --accent-soft: rgba(158, 173, 196, 0.14);
+  --accent-glow: rgba(200, 214, 236, 0.34);
+  --bg-void: #06070a;
+}
+
+:root[data-theme='aurora'] {
+  --accent: #59e69e;
+  --accent-alt: #8cadff;
+  --accent-soft: rgba(89, 230, 158, 0.14);
+  --accent-glow: rgba(89, 230, 158, 0.38);
+  --bg-void: #030a08;
+}
+
+/* The interface takes on the alert colour while N.O.V.A. is in an error state,
+   so a failure is legible from across the room without reading anything. */
+:root[data-state='error'] {
+  --accent: var(--danger);
+  --accent-glow: rgba(255, 91, 82, 0.4);
+  --accent-soft: rgba(255, 91, 82, 0.14);
+}

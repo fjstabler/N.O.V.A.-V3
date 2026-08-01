@@ -1,0 +1,44 @@
+appId: dev.nova.assistant
+productName: NOVA
+copyright: MIT licensed
+
+directories:
+  output: release/${version}
+  buildResources: build
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - '!**/*.map'
+
+# The Python core is not bundled: it needs the user's own interpreter and GPU
+# libraries (CUDA, PortAudio), which cannot be shipped portably. Installation is
+# documented in docs/SETUP.md and the shell attaches to whatever core it finds.
+asar: true
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Utility
+  maintainer: nova
+  desktop:
+    Name: N.O.V.A.
+    Comment: Local-first voice assistant
+    Categories: Utility;
+
+win:
+  target:
+    - nsis
+  artifactName: ${productName}-${version}-setup.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+
+mac:
+  target:
+    - dmg
+  category: public.app-category.utilities
