@@ -265,25 +265,39 @@ export class BridgeClient {
   }
 }
 
-/** Read the descriptor from Electron, falling back to a dev-server default. */
+/**
+ * Locate the core service.
+ *
+ * Never invents a token. An earlier version fell back to an empty one when the
+ * preload was unavailable, which turned "the preload failed to load" into an
+ * endless, silent stream of rejected connections — the loudest possible
+ * symptom attached to the quietest possible cause. Returning null instead keeps
+ * the client in its normal retry state and says exactly what is wrong, once.
+ */
 export function createDescriptorResolver(): () => Promise<BridgeDescriptor | null> {
+  let warnedNoPreload = false;
+
   return async () => {
     const api = window.nova;
+
     if (api) {
-      const descriptor = await api.getBridge();
-      if (descriptor) return descriptor;
+      // Null here is ordinary: the core may not have finished binding yet.
+      return await api.getBridge();
     }
-    // Running in a plain browser during development: assume the documented
-    // defaults and let the token come from the environment.
-    if (import.meta.env.DEV) {
-      return {
-        host: '127.0.0.1',
-        port: 8765,
-        token: import.meta.env.VITE_NOVA_TOKEN ?? '',
-        pid: 0,
-        version: 1,
-        startedAt: 0,
-      };
+
+    if (!warnedNoPreload) {
+      warnedNoPreload = true;
+      console.error(
+        '[bridge] window.nova is missing — the Electron preload script did not load. ' +
+          'Check that dist-electron/preload.cjs exists and that main.ts points at it.',
+      );
+    }
+
+    // A plain browser during development can still connect, but only with a
+    // token the developer supplied deliberately.
+    const token = import.meta.env.VITE_NOVA_TOKEN;
+    if (import.meta.env.DEV && token) {
+      return { host: '127.0.0.1', port: 8765, token, pid: 0, version: 1, startedAt: 0 };
     }
     return null;
   };

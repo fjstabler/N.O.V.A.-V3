@@ -208,7 +208,8 @@ function createWindow(): BrowserWindow {
     title: 'N.O.V.A.',
     icon: join(process.env.APP_ROOT!, 'build', 'icon.png'),
     webPreferences: {
-      preload: join(dirname, 'preload.mjs'),
+      // .cjs, not .mjs — see the preload build config in vite.config.ts.
+      preload: join(dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,

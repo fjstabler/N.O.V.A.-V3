@@ -8,7 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROTOCOL_VERSION } from '@protocol';
-import { BridgeClient, BridgeError } from './bridge';
+import { BridgeClient, BridgeError, createDescriptorResolver } from './bridge';
 
 class FakeSocket {
   static instances: FakeSocket[] = [];
@@ -113,6 +113,54 @@ describe('connection', () => {
     await client.connect();
     expect(client.connected).toBe(false);
     client.close();
+  });
+});
+
+describe('descriptor resolution', () => {
+  /**
+   * Regression: the resolver used to fabricate a descriptor with an empty token
+   * when the preload was unavailable. The core then rejected every connection
+   * with 4401 forever, and the log filled with `bridge_unauthorised` while the
+   * actual fault — a preload that failed to load — was invisible.
+   */
+  it('never invents a token when the preload is missing', async () => {
+    vi.stubGlobal('window', {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const resolve = createDescriptorResolver();
+    expect(await resolve()).toBeNull();
+
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('preload'));
+    error.mockRestore();
+  });
+
+  it('warns about a missing preload only once', async () => {
+    vi.stubGlobal('window', {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const resolve = createDescriptorResolver();
+    await resolve();
+    await resolve();
+    await resolve();
+
+    expect(error).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+  });
+
+  it('passes the preload descriptor straight through', async () => {
+    vi.stubGlobal('window', { nova: { getBridge: async () => descriptor } });
+    expect(await createDescriptorResolver()()).toEqual(descriptor);
+  });
+
+  it('returns null while the core is still binding', async () => {
+    // The preload is present but the core has not written its descriptor yet.
+    // That is ordinary startup, not an error — the client just keeps retrying.
+    vi.stubGlobal('window', { nova: { getBridge: async () => null } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    expect(await createDescriptorResolver()()).toBeNull();
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
   });
 });
 

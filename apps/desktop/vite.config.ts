@@ -21,7 +21,16 @@ export default defineConfig(({ command }) => ({
         vite: {
           build: {
             outDir: 'dist-electron',
-            rollupOptions: { external: ['electron'] },
+            rollupOptions: {
+              external: ['electron'],
+              // Emit CommonJS with an explicit .cjs extension. The package is
+              // `"type": "module"`, so a preload named .mjs would be loaded as
+              // an ES module — and the bundler emits `require("electron")`,
+              // which throws there. Electron always honours .cjs as CommonJS
+              // regardless of the surrounding package type, so this is the one
+              // naming that cannot be misinterpreted.
+              output: { format: 'cjs', entryFileNames: 'preload.cjs' },
+            },
           },
         },
       },
