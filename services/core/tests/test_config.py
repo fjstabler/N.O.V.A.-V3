@@ -159,3 +159,50 @@ def test_schema_handles_lists_of_groups() -> None:
     services = next(f for f in sections["homelab"]["fields"] if f["key"] == "services")
     assert services["control"] == "list-of-groups"
     assert {f["key"] for f in services["fields"]} >= {"kind", "url", "api_key"}
+
+
+# ------------------------------------------------- environment precedence
+
+
+def test_environment_overrides_are_recorded_by_path(paths: NovaPaths) -> None:
+    """An env var silently outranking the panel is a trap; it must be visible."""
+    os.environ["NOVA_OPENAI__API_KEY"] = "sk-from-environment"
+    try:
+        store = SettingsStore(paths)
+        assert "openai.api_key" in store.env_overrides
+        assert store.settings.openai.api_key == "sk-from-environment"
+    finally:
+        del os.environ["NOVA_OPENAI__API_KEY"]
+
+
+def test_no_overrides_means_an_empty_set(store: SettingsStore) -> None:
+    assert store.env_overrides == frozenset()
+
+
+def test_the_environment_keeps_precedence_after_a_save(paths: NovaPaths) -> None:
+    """Precedence must be the same at runtime as at load, or it is unexplainable."""
+    os.environ["NOVA_OPENAI__API_KEY"] = "sk-from-environment"
+    try:
+        store = SettingsStore(paths)
+        store.patch({"openai": {"api_key": "sk-from-panel"}})
+        assert store.settings.openai.api_key == "sk-from-environment"
+    finally:
+        del os.environ["NOVA_OPENAI__API_KEY"]
+
+    # The panel's value was still saved, and applies once the variable is gone.
+    assert SettingsStore(paths).settings.openai.api_key == "sk-from-panel"
+
+
+def test_an_environment_secret_is_never_written_to_disk(paths: NovaPaths) -> None:
+    """Writing it would defeat the point of supplying it via the environment."""
+    os.environ["NOVA_OPENAI__API_KEY"] = "sk-secret-from-environment"
+    try:
+        store = SettingsStore(paths)
+        # An unrelated edit still triggers a full write of the document.
+        store.patch({"appearance": {"theme": "ember"}})
+    finally:
+        del os.environ["NOVA_OPENAI__API_KEY"]
+
+    on_disk = paths.config_file.read_text(encoding="utf-8")
+    assert "sk-secret-from-environment" not in on_disk
+    assert "ember" in on_disk

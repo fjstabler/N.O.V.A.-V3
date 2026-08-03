@@ -164,8 +164,9 @@ class Orchestrator(Service):
                 await self.ctx.state.transition(NovaState.IDLE, reason="cancelled")
                 raise
             except NovaError as exc:
-                result = TurnResult(error=exc.message)
-                await self._fail(exc.message)
+                message = self._annotate(exc)
+                result = TurnResult(error=message)
+                await self._fail(message)
             except Exception as exc:
                 self.log.exception("turn_failed")
                 result = TurnResult(error=str(exc))
@@ -363,6 +364,20 @@ class Orchestrator(Service):
         voice = self.ctx.service("voice")
         if voice is not None and text.strip():
             await voice.speak(text)
+
+    def _annotate(self, exc: NovaError) -> str:
+        """Add the one detail the raw error cannot know.
+
+        A rejected key is confusing when an environment variable is quietly
+        outranking the settings panel: the panel shows a key, saving it appears
+        to work, and the assistant keeps using something else.
+        """
+        if "api key" in exc.message.lower() and ("openai.api_key" in self.ctx.store.env_overrides):
+            return (
+                f"{exc.message} It is currently coming from the NOVA_OPENAI__API_KEY "
+                "environment variable, which overrides the settings panel."
+            )
+        return exc.message
 
     async def _fail(self, message: str) -> None:
         self.bus.publish(Topics.TURN_FAILED, {"error": message}, source=self.name)
