@@ -1,5 +1,5 @@
-.PHONY: help setup setup-core setup-desktop dev dev-core dev-desktop test test-core test-desktop \
-        lint lint-core lint-desktop typecheck check build models clean
+.PHONY: help setup setup-core setup-desktop wake models dev dev-core dev-desktop test test-core test-desktop \
+        lint lint-core lint-desktop typecheck protocol check build package clean
 
 PYTHON ?= python3
 VENV   := .venv
@@ -28,6 +28,18 @@ setup-desktop: ## Install the desktop shell's dependencies
 
 models: ## Download the local voice models
 	$(PY) scripts/fetch_models.py
+
+# openWakeWord declares tflite-runtime on Linux but never uses it when driven
+# through ONNX, which is how N.O.V.A. drives it. The declaration alone blocks
+# installation on any Python without a tflite wheel — 3.14 today. Installing it
+# without its dependency list, then adding what it genuinely imports, sidesteps
+# a constraint that has no runtime meaning here.
+wake: ## Install the wake word engine (works on Python versions tflite does not support)
+	$(PIP) install --no-deps openwakeword
+	$(PIP) install onnxruntime numpy scipy scikit-learn requests tqdm
+	$(PY) -c "import openwakeword.utils as u; u.download_models()"
+	@echo "\nWake word installed. Bundled phrases: alexa, hey_jarvis, hey_mycroft, hey_rhasspy."
+	@echo "'hey nova' needs a trained model — see docs/SETUP.md."
 
 # --------------------------------------------------------------------- dev
 

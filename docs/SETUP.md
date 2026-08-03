@@ -55,13 +55,28 @@ you what is missing.
 
 #### Wake word
 
-`hey nova` is **not** one of openWakeWord's bundled phrases. Two options:
+```bash
+make wake
+```
 
-1. Train one at [openWakeWord](https://github.com/dscripka/openWakeWord) — it
-   takes a few minutes and needs no recordings — then point
-   `voice.wake.model` at the resulting `.onnx` file.
-2. Use a bundled phrase in the meantime: set `voice.wake.model` to `hey_jarvis`
-   or `alexa` and `voice.wake.phrase` to match.
+This installs openWakeWord *without* its dependency list, then adds what it
+actually imports. openWakeWord declares `tflite-runtime` on Linux but never
+touches it when driven through ONNX, which is how N.O.V.A. drives it — and that
+declaration alone blocks installation on any Python without a tflite wheel.
+Verified: the engine constructs and scores frames with ONNX and no tflite
+present at all.
+
+**`hey nova` is not a bundled phrase.** openWakeWord ships exactly six:
+`alexa`, `hey_jarvis`, `hey_mycroft`, `hey_rhasspy`, `timer`, `weather`.
+
+To use one now, set **Voice → Wake → Model** to `hey_jarvis` and **Phrase** to
+match.
+
+To get "Hey Nova" properly, train a model with the
+[openWakeWord training notebook](https://github.com/dscripka/openWakeWord#training-new-models).
+It generates its own synthetic speech, so you record nothing; expect an hour
+of unattended compute on Colab's free tier. Drop the resulting `.onnx` into
+`~/.local/share/nova/models/` and set **Model** to its filename.
 
 ## Run
 
