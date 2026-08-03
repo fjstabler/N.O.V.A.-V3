@@ -148,6 +148,12 @@ class WakeWordDetector:
     def peak_score(self) -> float:
         return self._peak
 
+    def unload(self) -> None:
+        """Release the model. The detector then scores nothing."""
+        self._model = None
+        self._streak = 0
+        self._peak = 0.0
+
     def update(self, *, sensitivity: float | None = None, cooldown: float | None = None) -> None:
         if sensitivity is not None:
             self.sensitivity = sensitivity

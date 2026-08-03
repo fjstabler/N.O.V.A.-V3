@@ -143,7 +143,25 @@ class VoiceService(Service):
             "microphone": "microphone" not in self._degraded,
         }
 
+    #: Settings that cannot be applied to a loaded model and need a restart.
+    _RESTART_REQUIRED = ("voice.stt.model_size", "voice.stt.device", "voice.stt.compute_type")
+
     def _on_settings_changed(self, settings: Any, changed: dict[str, Any]) -> None:
+        # Changing the wake phrase means loading a different model. Without this
+        # the panel appears to accept the change and the detector carries on
+        # with whatever it had — which reads as "the wake word just doesn't work".
+        if "voice.wake.model" in changed or "voice.wake.enabled" in changed:
+            self.spawn(self._reload_wake_word(), name="voice-wake-reload")
+
+        for path in self._RESTART_REQUIRED:
+            if path in changed:
+                self._notify(
+                    "warning",
+                    "Restart required",
+                    f"{path.rsplit('.', 1)[-1].replace('_', ' ')} takes effect "
+                    "the next time N.O.V.A. starts.",
+                )
+
         if "voice.wake.sensitivity" in changed or "voice.wake.cooldown_seconds" in changed:
             self.wake.update(
                 sensitivity=settings.voice.wake.sensitivity,
@@ -155,6 +173,47 @@ class VoiceService(Service):
             self.output.volume = settings.voice.tts.volume
         if "voice.audio.input_gain" in changed:
             self.input.gain = settings.voice.audio.input_gain
+
+    async def _reload_wake_word(self) -> None:
+        """Swap in a different wake word model without restarting."""
+        settings = self.ctx.settings.voice.wake
+
+        if not settings.enabled:
+            self.wake.unload()
+            self._degraded["wake word"] = "disabled"
+            self.log.info("wake_word_disabled")
+            return
+
+        detector = WakeWordDetector(
+            settings.model,
+            sensitivity=settings.sensitivity,
+            cooldown=settings.cooldown_seconds,
+            models_dir=self.ctx.paths.models_dir,
+        )
+        try:
+            await detector.load()
+        except DegradedCapability as exc:
+            self._degraded["wake word"] = exc.reason
+            self.log.warning("wake_word_reload_failed", reason=exc.reason, remedy=exc.remedy)
+            self._notify("warning", "Wake word unavailable", exc.reason)
+            return
+        except Exception as exc:
+            self._degraded["wake word"] = str(exc)
+            self.log.exception("wake_word_reload_failed")
+            self._notify("warning", "Wake word unavailable", str(exc)[:160])
+            return
+
+        self.wake = detector
+        self._degraded.pop("wake word", None)
+        self.log.info("wake_word_reloaded", model=settings.model)
+        self._notify("success", "Wake word ready", f"Listening for '{settings.phrase}'.")
+
+    def _notify(self, level: str, title: str, body: str) -> None:
+        self.bus.publish(
+            Topics.NOTIFICATION,
+            {"level": level, "title": title, "body": body, "source": "voice", "timeout": 8.0},
+            source=self.name,
+        )
 
     # ------------------------------------------------------------- listen loop
 
