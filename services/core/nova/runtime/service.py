@@ -223,5 +223,25 @@ class ServiceManager:
             if service is not None:
                 await service.stop()
 
+    async def restart(self, name: str) -> ServiceState:
+        """Stop and start one service, picking up its current configuration.
+
+        Integration services read their settings once, at start. Without this a
+        newly-entered URL or token does nothing until the whole process is
+        restarted — the save appears to succeed and the integration stays dark,
+        which is indistinguishable from it being broken.
+
+        A degraded service restarts too: that is the case that matters, since it
+        is precisely what an unconfigured integration looks like.
+        """
+        service = self._services.get(name)
+        if service is None:
+            raise ServiceStartupError(f"unknown service: {name}")
+        log.info("service_restarting", service=name, was=service.health.state.value)
+        await service.stop()
+        state = await service.start()
+        log.info("service_restarted", service=name, state=state.value)
+        return state
+
     def health_report(self) -> list[dict[str, object]]:
         return [s.health.as_payload() for s in self._services.values()]

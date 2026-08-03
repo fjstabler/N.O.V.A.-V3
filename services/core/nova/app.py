@@ -35,6 +35,16 @@ log = get_logger(__name__)
 
 VERSION = "3.0.0"
 
+#: Config sections each integration service reads at start. Editing any of them
+#: restarts that service, so a newly-entered URL or token takes effect without a
+#: process restart. Voice and system are absent deliberately: they hold a
+#: microphone and a metrics loop, and reload their own settings in place.
+_SERVICE_SECTIONS: dict[str, tuple[str, ...]] = {
+    "home": ("home_assistant", "mqtt"),
+    "homelab": ("homelab",),
+    "calendar": ("calendar",),
+}
+
 
 class NovaApplication:
     """Owns the process lifecycle."""
@@ -43,8 +53,11 @@ class NovaApplication:
         self.ctx = NovaContext(store)
         self.router = RequestRouter()
         self._stopping = asyncio.Event()
+        #: Restarts in flight, held so they are not garbage collected.
+        self._restarts: set[asyncio.Task[None]] = set()
         self._register_services()
         self._register_routes()
+        self.ctx.store.on_change(self._on_settings_changed)
 
     # ---------------------------------------------------------------- assembly
 
@@ -220,6 +233,41 @@ class NovaApplication:
         return voice.status() if voice is not None else {"state": "unavailable"}
 
     # --------------------------------------------------------------- lifecycle
+
+    def _on_settings_changed(self, settings: Any, changed: dict[str, Any]) -> None:
+        """Restart any integration whose configuration just changed."""
+        if self.ctx.shutting_down:
+            return
+        touched = {path.split(".", 1)[0] for path in changed}
+        for name, sections in _SERVICE_SECTIONS.items():
+            if touched.isdisjoint(sections):
+                continue
+            task = asyncio.create_task(self._restart_integration(name))
+            self._restarts.add(task)
+            task.add_done_callback(self._restarts.discard)
+
+    async def _restart_integration(self, name: str) -> None:
+        from .runtime.service import ServiceState
+
+        try:
+            state = await self.ctx.services.restart(name)
+        except Exception:  # a failed restart must not take the app down
+            log.exception("integration_restart_failed", service=name)
+            return
+
+        service = self.ctx.services.get(name)
+        detail = (service.health.detail or "") if service is not None else ""
+        if state is ServiceState.RUNNING:
+            self._notify("success", f"{name.title()} connected", detail)
+        else:
+            self._notify("warning", f"{name.title()} unavailable", detail or state.value)
+
+    def _notify(self, level: str, title: str, body: str) -> None:
+        self.ctx.bus.publish(
+            Topics.NOTIFICATION,
+            {"level": level, "title": title, "body": body, "source": "app", "timeout": 9.0},
+            source="app",
+        )
 
     async def start(self) -> None:
         log.info("nova_starting", version=VERSION, config=str(self.ctx.paths.config_file))
