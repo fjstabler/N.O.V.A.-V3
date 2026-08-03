@@ -59,17 +59,17 @@ class SkillRegistry(Service):
         self._unavailable: dict[str, str] = {}
         self._tools: dict[str, ToolSpec] = {}
         self._pending: dict[str, _PendingAction] = {}
+        self._discovered: list[type[Skill]] = []
 
     # -------------------------------------------------------------- lifecycle
 
     async def on_start(self) -> None:
         self.ctx.skills = self
         disabled = set(self.ctx.settings.plugins.disabled)
+        # Kept so re-evaluation can rediscover without a second directory scan.
+        self._discovered = [c for c in self._discover() if c.name not in disabled]
 
-        for skill_cls in self._discover():
-            if skill_cls.name in disabled:
-                self.log.info("skill_disabled_by_config", skill=skill_cls.name)
-                continue
+        for skill_cls in self._discovered:
             await self._install(skill_cls)
 
         self.log.info(
@@ -78,6 +78,44 @@ class SkillRegistry(Service):
             unavailable=len(self._unavailable),
             tools=len(self._tools),
         )
+
+    async def reevaluate(self) -> set[str]:
+        """Re-run availability for every discovered skill.
+
+        `is_available()` is only ever checked at start, which means a skill
+        whose backing service was unconfigured at boot never gets a second
+        look — the service can reconnect (say, a Home Assistant token being
+        saved) while the skill and its tools stay absent from the model's
+        catalogue. Silently, since nothing in that path raises.
+
+        Called whenever a service restarts, so "connect this integration" and
+        "its tools appear" happen in the same instant instead of needing a
+        restart of the whole process.
+
+        Returns the set of skill names whose availability changed, so the
+        caller can decide whether the change is worth telling the user about.
+        """
+        changed: set[str] = set()
+        for skill_cls in self._discovered:
+            was_available = skill_cls.name in self._skills
+            if was_available:
+                continue  # a skill that loaded stays loaded; setup is not repeated
+            available, reason = self._probe(skill_cls)
+            if available and skill_cls.name not in self._skills:
+                await self._install(skill_cls)
+                if skill_cls.name in self._skills:
+                    changed.add(skill_cls.name)
+            elif not available:
+                self._unavailable[skill_cls.name] = reason
+        return changed
+
+    def _probe(self, skill_cls: type[Skill]) -> tuple[bool, str]:
+        """Check availability without committing to a full install."""
+        try:
+            probe = skill_cls(self.ctx)
+        except Exception as exc:  # noqa: BLE001 - a broken constructor is not availability
+            return False, str(exc)
+        return probe.is_available()
 
     async def _install(self, skill_cls: type[Skill]) -> None:
         try:

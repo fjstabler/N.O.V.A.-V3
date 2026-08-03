@@ -234,3 +234,51 @@ async def test_non_destructive_mutations_run_immediately(ctx: NovaContext) -> No
     registry, skill = await registry_with_sample(ctx)
     assert await registry.call("sample_set_mode", {"mode": "fast"}) == "mode=fast"
     assert skill.calls == [("set_mode", "fast")]
+
+
+# --------------------------------------------------------- live availability
+
+
+async def test_reevaluate_installs_a_skill_that_becomes_available(ctx: NovaContext) -> None:
+    """The scenario behind a real bug: connecting an integration after boot must
+    make its tools appear without a process restart."""
+
+    class ToggleableSkill(Skill):
+        name = "toggleable"
+        description = "Available only once a flag is flipped."
+
+        def is_available(self) -> tuple[bool, str]:
+            return bool(ctx.settings.plugins.disabled == []) and _FLAG["on"], "flag is off"
+
+        @tool("Do the thing.")
+        async def do_thing(self) -> str:
+            return "done"
+
+    _FLAG = {"on": False}
+
+    registry = SkillRegistry(ctx)
+    registry._discovered = [ToggleableSkill]
+
+    # At "boot": unavailable, exactly like an unconfigured Home Assistant.
+    for skill_cls in registry._discovered:
+        await registry._install(skill_cls)
+    assert "toggleable_do_thing" not in registry._tools
+    assert "toggleable" in registry._unavailable
+
+    # The backing service "reconnects".
+    _FLAG["on"] = True
+    changed = await registry.reevaluate()
+
+    assert changed == {"toggleable"}
+    assert "toggleable_do_thing" in registry._tools
+    assert await registry.call("toggleable_do_thing", {}) == "done"
+
+
+async def test_reevaluate_does_not_reinstall_an_already_loaded_skill(ctx: NovaContext) -> None:
+    registry, skill = await registry_with_sample(ctx)
+    registry._discovered = [SampleSkill]
+
+    changed = await registry.reevaluate()
+
+    assert changed == set()
+    assert skill.calls == []  # setup() was not called a second time

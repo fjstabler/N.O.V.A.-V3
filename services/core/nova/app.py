@@ -257,8 +257,23 @@ class NovaApplication:
 
         service = self.ctx.services.get(name)
         detail = (service.health.detail or "") if service is not None else ""
+
+        # A service coming up does not by itself put its skill's tools in front
+        # of the model — is_available() was only ever checked once, at boot.
+        # Without this, "connect Home Assistant" and "she can control lights"
+        # are two different events, and the gap between them looks exactly
+        # like the integration not working at all.
+        newly_available: set[str] = set()
+        if state is ServiceState.RUNNING and self.ctx.skills is not None:
+            newly_available = await self.ctx.skills.reevaluate()
+
         if state is ServiceState.RUNNING:
-            self._notify("success", f"{name.title()} connected", detail)
+            body = detail
+            if newly_available:
+                skills = ", ".join(sorted(newly_available))
+                plural = "s" if len(newly_available) != 1 else ""
+                body = f"{detail} — {skills} skill{plural} now available"
+            self._notify("success", f"{name.title()} connected", body)
         else:
             self._notify("warning", f"{name.title()} unavailable", detail or state.value)
 
