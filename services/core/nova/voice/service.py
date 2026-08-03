@@ -167,7 +167,11 @@ class VoiceService(Service):
             except asyncio.CancelledError:
                 raise
             except Exception:
+                # Whatever went wrong, the assistant must not be left mid-capture
+                # or stuck in THINKING with no way back.
                 self.log.exception("frame_processing_failed")
+                self._reset_capture()
+                await self._return_to_idle()
 
     async def _on_frame(self, frame: bytes) -> None:
         if self._state is ListenState.SUSPENDED:
@@ -237,6 +241,24 @@ class VoiceService(Service):
             audio_ms=transcript.audio_ms,
             confidence=transcript.confidence,
         )
+
+        if transcript.error:
+            # Surface it. Sitting in THINKING with nothing on screen is the
+            # worst possible way to report a failure.
+            self.bus.publish(
+                Topics.NOTIFICATION,
+                {
+                    "level": "warning",
+                    "title": "Could not transcribe that",
+                    "body": transcript.error,
+                    "icon": "alert",
+                    "source": "voice",
+                    "timeout": 10.0,
+                },
+                source=self.name,
+            )
+            await self._return_to_idle()
+            return
 
         if not transcript.usable:
             await self._return_to_idle()

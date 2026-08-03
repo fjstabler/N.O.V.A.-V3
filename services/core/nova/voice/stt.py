@@ -48,6 +48,8 @@ class Transcript:
     duration_ms: int = 0
     audio_ms: int = 0
     confidence: float = 0.0
+    #: Set when transcription failed. Empty on success, including on silence.
+    error: str = ""
 
     @property
     def usable(self) -> bool:
@@ -76,6 +78,8 @@ class Transcriber:
         self.models_dir = models_dir
         self._model: Any = None
         self._resolved_device = ""
+        #: Set once we have given up on the GPU for this session.
+        self._cpu_fallback = False
 
     @property
     def loaded(self) -> bool:
@@ -145,20 +149,57 @@ class Transcriber:
 
         seconds = len(audio) / (16000 * 2)
         budget = max(30.0, seconds * 6)
+
         try:
-            return await asyncio.wait_for(
-                asyncio.to_thread(self._transcribe_sync, audio), timeout=budget
-            )
+            return await self._run(audio, budget)
         except TimeoutError:
             log.error(
                 "transcription_timed_out",
                 seconds=round(seconds, 1),
                 budget=round(budget),
                 device=self._resolved_device,
-                hint="a CUDA/cuDNN mismatch is the usual cause; "
-                "set voice.stt.device to 'cpu' to rule it out",
             )
-            return Transcript(text="")
+            return Transcript(text="", error=f"transcription timed out after {budget:.0f}s")
+        except Exception as exc:
+            # A GPU backend that errors once will error every time — usually a
+            # CUDA build meeting a cuDNN it dislikes. Rather than leaving voice
+            # permanently broken, drop to CPU for the rest of the session and
+            # retry immediately. Slower, but the user keeps talking.
+            if self._resolved_device == "cuda" and not self._cpu_fallback:
+                self._cpu_fallback = True
+                log.warning(
+                    "cuda_transcription_failed_falling_back_to_cpu",
+                    error=str(exc)[:200],
+                    hint="install a matching cuDNN 9 to restore GPU transcription",
+                )
+                try:
+                    await asyncio.to_thread(self._reload_on_cpu)
+                    return await self._run(audio, budget)
+                except Exception as retry:
+                    log.exception("cpu_fallback_failed")
+                    return Transcript(text="", error=str(retry)[:200])
+
+            log.exception("transcription_failed", device=self._resolved_device)
+            return Transcript(text="", error=str(exc)[:200])
+
+    async def _run(self, audio: bytes, budget: float) -> Transcript:
+        return await asyncio.wait_for(
+            asyncio.to_thread(self._transcribe_sync, audio), timeout=budget
+        )
+
+    def _reload_on_cpu(self) -> None:
+        """Rebuild the model on CPU after the GPU backend has failed."""
+        from faster_whisper import WhisperModel
+
+        self._model = WhisperModel(
+            self.model_size,
+            device="cpu",
+            compute_type="int8",
+            download_root=str(self.models_dir / "whisper") if self.models_dir else None,
+        )
+        self._resolved_device = "cpu"
+        self.compute_type = "int8"
+        log.info("transcriber_reloaded", device="cpu", compute="int8")
 
     def _transcribe_sync(self, audio: bytes) -> Transcript:
         import numpy
