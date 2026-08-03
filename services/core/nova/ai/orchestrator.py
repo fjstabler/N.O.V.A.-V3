@@ -267,6 +267,9 @@ class Orchestrator(Service):
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], *, stream: bool
     ) -> Completion:
         settings = self.ctx.settings.openai
+        # Marks the boundary between local work and the network call, so a hang
+        # can be attributed to one side or the other from the log alone.
+        self.log.info("reasoning", model=settings.model, tools=len(tools), streaming=stream)
         if not stream:
             return await self.client.complete(
                 messages,

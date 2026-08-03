@@ -129,10 +129,36 @@ class Transcriber:
         self.compute_type = compute
 
     async def transcribe(self, audio: bytes) -> Transcript:
-        """Transcribe 16 kHz mono 16-bit PCM."""
+        """Transcribe 16 kHz mono 16-bit PCM.
+
+        Bounded by a timeout because a wedged inference backend would otherwise
+        hang the turn forever with the assistant stuck in THINKING and nothing
+        in the log to say why. The most common cause is a CUDA build meeting a
+        cuDNN it does not like.
+
+        The worker thread cannot be killed — it is left to finish or die on its
+        own — but the event loop is freed, so the assistant recovers, reports,
+        and stays usable.
+        """
         if self._model is None:
             return Transcript(text="")
-        return await asyncio.to_thread(self._transcribe_sync, audio)
+
+        seconds = len(audio) / (16000 * 2)
+        budget = max(30.0, seconds * 6)
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._transcribe_sync, audio), timeout=budget
+            )
+        except TimeoutError:
+            log.error(
+                "transcription_timed_out",
+                seconds=round(seconds, 1),
+                budget=round(budget),
+                device=self._resolved_device,
+                hint="a CUDA/cuDNN mismatch is the usual cause; "
+                "set voice.stt.device to 'cpu' to rule it out",
+            )
+            return Transcript(text="")
 
     def _transcribe_sync(self, audio: bytes) -> Transcript:
         import numpy
