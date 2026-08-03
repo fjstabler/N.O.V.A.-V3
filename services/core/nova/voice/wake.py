@@ -60,7 +60,7 @@ class WakeWordDetector:
         try:
             from openwakeword.model import Model
         except ImportError as exc:
-            raise MissingDependency("wake word", "openwakeword", "voice") from exc
+            raise MissingDependency("wake word", "openwakeword", "wake") from exc
 
         candidate = Path(self.model_name)
         if candidate.suffix == ".onnx":
@@ -76,8 +76,25 @@ class WakeWordDetector:
         try:
             self._model = Model(wakeword_models=paths, inference_framework="onnx")
         except Exception as exc:
-            message = str(exc)
-            if "download" in message.lower() or "no such file" in message.lower():
+            # The single most common first-run failure is naming a phrase that
+            # openWakeWord does not ship. Say so, and say what it does ship —
+            # the raw library error names neither.
+            available = _bundled_models()
+            hint = f"available phrases: {', '.join(available)}" if available else ""
+            message = str(exc).lower()
+            if candidate.suffix != ".onnx" and (
+                "download" in message
+                or "no such file" in message
+                or "not found" in message
+                or "key" in message
+            ):
+                raise MissingModel(
+                    "wake word",
+                    f"'{self.model_name}' is not a bundled openWakeWord phrase. "
+                    f"Either train one and point voice.wake.model at the .onnx file, "
+                    f"or pick a bundled phrase in settings" + (f" — {hint}" if hint else ""),
+                ) from exc
+            if "download" in message or "no such file" in message:
                 raise MissingModel("wake word", self.model_name) from exc
             raise
 
@@ -136,3 +153,24 @@ class WakeWordDetector:
             self.sensitivity = sensitivity
         if cooldown is not None:
             self.cooldown = cooldown
+
+
+def _bundled_models() -> list[str]:
+    """Names openWakeWord has actually downloaded, for a useful error message."""
+    try:
+        import openwakeword
+
+        models = getattr(openwakeword, "MODELS", None)
+        if isinstance(models, dict) and models:
+            return sorted(models)
+
+        from pathlib import Path as _Path
+
+        root = _Path(openwakeword.__file__).parent / "resources" / "models"
+        return sorted(
+            p.stem
+            for p in root.glob("*.onnx")
+            if not p.stem.startswith(("melspectrogram", "embedding", "silero"))
+        )
+    except Exception:  # noqa: BLE001 - this runs while reporting another error
+        return []

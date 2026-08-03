@@ -24,15 +24,38 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Local voice stack — wake word, transcription, synthesis.
-voice = [
+# The voice stack is split per stage, because pip installs an extra atomically:
+# one unavailable dependency rolls back the whole set. Bundling wake word,
+# transcription and synthesis together meant a missing wheel for any one of them
+# left the user with no microphone either — which is exactly backwards, since
+# the runtime is built to degrade each stage independently.
+#
+# `wake` is deliberately NOT part of `voice`. openWakeWord declares
+# tflite-runtime on Linux, which lags new Python releases by a long way, and
+# N.O.V.A. drives it through ONNX at runtime and never touches TFLite. Keeping
+# it separate means a Python version too new for TFLite still gets a working
+# microphone, transcription, synthesis and push-to-talk.
+audio = [
   "sounddevice>=0.4.6",
   "numpy>=1.26,<3",
-  "openwakeword>=0.6.0",
-  "faster-whisper>=1.0.3",
   "webrtcvad>=2.0.10",
+]
+stt = [
+  "faster-whisper>=1.0.3",
+]
+tts = [
   "kokoro-onnx>=0.4.0",
   "onnxruntime>=1.18",
+]
+wake = [
+  "openwakeword>=0.6.0",
+]
+# Everything that installs cleanly on any supported Python. Add `wake` for the
+# wake word: pip install -e ".[voice,wake]"
+voice = [
+  "nova-core[audio]",
+  "nova-core[stt]",
+  "nova-core[tts]",
 ]
 # Cloud reasoning (the one permitted paid dependency).
 ai = [

@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Python 3.11 or newer
+- Python 3.11–3.13 (3.14 works, minus the wake word — see below)
 - Node.js 20 or newer
 - Linux, Windows or macOS
 - An OpenAI API key (the only paid dependency)
@@ -35,9 +35,20 @@ cd apps/desktop && npm install
 Kept separate because it pulls several hundred megabytes of ML wheels:
 
 ```bash
-pip install -e "services/core[voice]"
-make models      # downloads Kokoro; prepares openWakeWord
+pip install -e "services/core[voice]"   # microphone, Whisper, Kokoro
+pip install -e "services/core[wake]"    # wake word — see the caveat below
+make models
 ```
+
+`wake` is a separate extra on purpose. openWakeWord declares `tflite-runtime`
+on Linux, which has no wheel for the newest Python releases — on Python 3.14
+the install fails. Because pip installs an extra atomically, bundling it with
+the rest would take the microphone down with it. Split out, everything else
+installs and push-to-talk works regardless.
+
+**Python 3.11–3.13 is the sweet spot.** The base service runs on 3.14, but
+parts of the ML ecosystem do not yet. If `[wake]` will not install, that is
+why.
 
 The core runs happily without it — every stage degrades independently and tells
 you what is missing.

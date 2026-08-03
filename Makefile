@@ -19,8 +19,9 @@ setup-core: ## Create the venv and install the core (with all extras)
 	$(PYTHON) -m venv $(VENV)
 	$(PIP) install --upgrade pip
 	$(PIP) install -e "$(CORE)[dev,ai,embeddings,home,server]"
-	@echo "\nVoice extras are separate: they pull large ML wheels."
-	@echo "  $(PIP) install -e '$(CORE)[voice]'"
+	@echo "\nVoice is separate: it pulls large ML wheels."
+	@echo "  $(PIP) install -e '$(CORE)[voice]'        # mic, Whisper, Kokoro"
+	@echo "  $(PIP) install -e '$(CORE)[wake]'         # wake word (needs Python <= 3.13)"
 
 setup-desktop: ## Install the desktop shell's dependencies
 	cd $(DESKTOP) && npm install
