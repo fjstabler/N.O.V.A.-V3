@@ -19,20 +19,48 @@ import { useNova, type Settings } from '@/state/store';
 type Draft = Record<string, unknown>;
 
 /** Read a dotted path out of a nested object. */
-function read(source: unknown, path: string[]): unknown {
+export function read(source: unknown, path: string[]): unknown {
   return path.reduce<unknown>(
     (node, key) => (node && typeof node === 'object' ? (node as Draft)[key] : undefined),
     source,
   );
 }
 
-/** Immutably write a dotted path, creating intermediate objects as needed. */
-function write(source: Draft, path: string[], value: unknown): Draft {
+/**
+ * Immutably write a dotted path, creating intermediate objects as needed.
+ *
+ * A path segment that indexes into an array (a list-of-groups item, e.g.
+ * `accounts.0.name`) has to clone that array, not spread it as a plain
+ * object — `{...anArray, "0": x}` drops the array itself and produces
+ * `{0: x}`, which then reads back as `Array.isArray() === false` and the
+ * whole list renders as empty. That is what "typing into a newly added
+ * account makes it vanish" actually was: the first keystroke silently
+ * turned the accounts array into a plain object.
+ */
+export function write(source: Draft, path: string[], value: unknown): Draft {
   const [head, ...rest] = path;
   if (!head) return source;
   if (rest.length === 0) return { ...source, [head]: value };
-  const child = (source[head] ?? {}) as Draft;
-  return { ...source, [head]: write(child, rest, value) };
+  const child = source[head];
+  if (Array.isArray(child)) {
+    return { ...source, [head]: writeIndex(child, rest, value) };
+  }
+  return { ...source, [head]: write((child ?? {}) as Draft, rest, value) };
+}
+
+function writeIndex(source: unknown[], path: string[], value: unknown): unknown[] {
+  const [head, ...rest] = path;
+  const index = Number(head);
+  const next = [...source];
+  if (rest.length === 0) {
+    next[index] = value;
+  } else {
+    const child = next[index];
+    next[index] = Array.isArray(child)
+      ? writeIndex(child, rest, value)
+      : write((child ?? {}) as Draft, rest, value);
+  }
+  return next;
 }
 
 interface FieldProps {
