@@ -224,10 +224,28 @@ class HomeAssistantClient:
     ) -> list[dict[str, Any]]:
         payload: dict[str, Any] = dict(data)
         if entity_id:
+            entity_id = self._resolve_entity_id(entity_id)
             payload["entity_id"] = entity_id
         result = await self._post(f"/services/{domain}/{service}", payload)
         log.info("ha_service_called", domain=domain, service=service, entity=entity_id)
         return result if isinstance(result, list) else []
+
+    def _resolve_entity_id(self, entity_id: str) -> str:
+        """Guard against a hallucinated id reaching Home Assistant.
+
+        Home Assistant's service API does not error on an entity id that
+        matches nothing — it just does nothing and returns 200. That makes a
+        model-invented id (built from a mis-heard name, say) indistinguishable
+        from success: the log says the call went through, nothing in the house
+        moved, and there is no exception to catch. Real callers inside this
+        class always pass an id straight from ``resolve_one``, which is already
+        exact, so this only ever does work for a guessed one — and turns a
+        silent no-op into the same "I can't find anything called" error normal
+        name resolution gives.
+        """
+        if entity_id in self._entities:
+            return entity_id
+        return self.resolve_one(entity_id).entity_id
 
     async def turn_on(self, entity_id: str, **data: Any) -> str:
         domain = entity_id.split(".", 1)[0]

@@ -188,7 +188,10 @@ class HomeSkill(Skill):
         return f"{action} on {entity.friendly_name}"
 
     @tool(
-        "Call any Home Assistant service directly, for anything not covered above.",
+        "Call a Home Assistant service directly, only for something no tool above covers. "
+        "Prefer set_device, set_brightness etc. for ordinary control — they resolve the device "
+        "name against what actually exists. A guessed entity id here that matches nothing is "
+        "rejected rather than silently doing nothing.",
         destructive=True,
     )
     async def call_service(
