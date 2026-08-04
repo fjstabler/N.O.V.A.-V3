@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nova.ai.prompt import build_system_prompt
+from nova.ai.prompt import build_system_prompt, facts_for_prompt
 from nova.context import NovaContext
 from nova.memory.models import Memory
 
@@ -59,3 +59,25 @@ def test_facts_and_recent_turns_are_split_into_separate_blocks(ctx: NovaContext)
     assert facts_heading < turns_heading
     assert "Lives in the garage" in prompt
     assert "is the NAS online" in prompt
+
+
+def test_facts_for_prompt_drops_auto_logged_turns() -> None:
+    """The actual fix: even a caveated recalled turn measurably swayed a cheap
+    model away from calling a tool, for two unrelated skills in a row. Turn
+    exchanges are cut before build_system_prompt ever sees them, rather than
+    trusting the wording of a caveat to be enough."""
+    fact = Memory(content="Lives in the garage", subject="NAS", source="explicit")
+    turn = Memory(
+        content="User asked: what's on my calendar — N.O.V.A. replied: I can't access it.",
+        subject="conversation",
+        source="turn",
+    )
+    kept = facts_for_prompt([fact, turn])
+    assert kept == [fact]
+
+
+def test_facts_for_prompt_keeps_everything_else() -> None:
+    explicit = Memory(content="Prefers metric", source="explicit")
+    default_source = Memory(content="Some memory with the default source")
+    kept = facts_for_prompt([explicit, default_source])
+    assert kept == [explicit, default_source]

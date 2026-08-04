@@ -27,7 +27,7 @@ from ..runtime import NovaState, Service, Topics
 from ..runtime.errors import ConfirmationRequired, NovaError
 from ..skills.registry import SkillRegistry
 from .client import Completion, OpenAIClient, ReasoningUnavailable, ToolCall
-from .prompt import build_messages, build_system_prompt, summarise_for_memory
+from .prompt import build_messages, build_system_prompt, facts_for_prompt, summarise_for_memory
 
 #: Splits on sentence-ending punctuation followed by whitespace.
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+|(?<=[.!?])$")
@@ -206,7 +206,7 @@ class Orchestrator(Service):
             )
 
         memory = self.ctx.service("memory")
-        memories = await memory.recall(text) if memory else []
+        memories = facts_for_prompt(await memory.recall(text)) if memory else []
         history = await self._history()
 
         system_prompt = build_system_prompt(self.ctx, memories)

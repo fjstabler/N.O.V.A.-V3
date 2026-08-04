@@ -138,6 +138,23 @@ def build_messages(
     return messages
 
 
+def facts_for_prompt(memories: list[Memory]) -> list[Memory]:
+    """Drop auto-logged conversation exchanges before they reach the model.
+
+    Every turn is recorded as a low-importance memory so the model can promote
+    anything worth keeping via the explicit remember tool — it was never meant
+    to be treated as a fact itself. But recalling one for a live, related query
+    put a stale capability refusal on equal footing with the tool list sitting
+    right next to it in the same prompt, and a caveat in the wording was not
+    enough: a cheap model leaned on the recalled "I don't have access" text
+    over actually trying the tool, for two unrelated skills in a row. Cutting
+    these before they reach the prompt removes the temptation rather than
+    hoping the model resists it. Explicit facts, preferences and entities are
+    unaffected — this only touches ``source == "turn"``.
+    """
+    return [m for m in memories if m.source != "turn"]
+
+
 def summarise_for_memory(user_text: str, reply: str) -> str:
     """Compact a turn into one line for long-term storage."""
     user_text = " ".join(user_text.split())[:300]
