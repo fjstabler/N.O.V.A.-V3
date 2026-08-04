@@ -305,6 +305,17 @@ class CalendarService(Service):
         return f"{len(self._accounts)} account(s)" if self._accounts else "local only"
 
     @property
+    def connected_accounts(self) -> list[str]:
+        """Names of CalDAV accounts actually connected right now.
+
+        The service itself starts fine with zero connected accounts — a bad
+        URL or password degrades to local-only storage rather than failing
+        boot — so this is the only way to tell "syncing with Apple Calendar"
+        apart from "nothing synced, only what was created locally".
+        """
+        return sorted(self._accounts)
+
+    @property
     def store(self) -> CalendarStore:
         if self._store is None:
             raise IntegrationError("calendar", "store not started")

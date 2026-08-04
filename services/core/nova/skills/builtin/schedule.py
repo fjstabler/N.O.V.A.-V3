@@ -19,6 +19,13 @@ class CalendarSkill(Skill):
     name = "calendar"
     description = "Read, create, move and delete calendar events; set reminders."
     category = "Calendar"
+    prompt_hint = (
+        "For anything about the calendar — what's on, free time, creating, moving or deleting "
+        "events — call a calendar tool. Never answer from memory or a guess. A CalDAV account "
+        "not being connected (see the environment below) does not mean the calendar is "
+        "inaccessible: locally created events and reminders always work, so still check before "
+        "saying you can't."
+    )
 
     def is_available(self) -> tuple[bool, str]:
         if self.ctx.service("calendar") is None:
@@ -28,6 +35,18 @@ class CalendarSkill(Skill):
     @property
     def calendar(self) -> CalendarService:
         return self.ctx.require("calendar", CalendarService)
+
+    def context_lines(self) -> list[str]:
+        calendar = self.ctx.service("calendar", CalendarService)
+        if calendar is None:
+            return []
+        accounts = calendar.connected_accounts
+        if accounts:
+            return [f"Calendar accounts connected and syncing: {', '.join(accounts)}."]
+        return [
+            "No CalDAV account is connected right now — only locally created events "
+            "and reminders are available."
+        ]
 
     @tool("Get the events scheduled for a given day.")
     async def agenda(
