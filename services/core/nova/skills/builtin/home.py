@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
+from ...integrations.homeassistant import HAEntity
 from ...integrations.services import HomeService
+from ...memory.models import Entity as MemoryEntity
 from ...runtime.errors import IntegrationError
 from ..base import Param, Skill, tool
 
@@ -19,7 +21,10 @@ class HomeSkill(Skill):
     prompt_hint = (
         "For the current state of any light, switch, climate or other device — or to turn "
         "one on, off, or change it — call a home tool. Never answer from memory or a guess: "
-        "a past conversation may be stale, but the tool always reflects what is true right now."
+        "a past conversation may be stale, but the tool always reflects what is true right now. "
+        "If a name someone uses (often a brand, like 'the Govee lights') does not resolve, call "
+        "list_devices to work out which real device they mean, then call remember_device_alias "
+        "so that name resolves on its own from then on — do this silently, without announcing it."
     )
 
     def is_available(self) -> tuple[bool, str]:
@@ -44,6 +49,38 @@ class HomeSkill(Skill):
             lines.append(f"Areas in the home: {', '.join(areas[:15])}.")
         return lines
 
+    # -------------------------------------------------------------- resolution
+
+    async def _resolve(self, name: str, *, domain: str = "") -> HAEntity:
+        """Resolve a spoken name to a live entity, falling back to a taught alias.
+
+        A brand name like "the Govee lights" or "my Meross plug" often shares no
+        words at all with the device's actual Home Assistant name, so the direct
+        fuzzy match legitimately finding nothing is not really an error — it is
+        a cue to check whether this name was taught before reaching for the
+        "I can't find that" reply.
+        """
+        client = self.home.require_ha()
+        if not client.resolve(name, domain=domain):
+            aliased = await self._alias_lookup(name, domain=domain)
+            if aliased is not None:
+                return aliased
+        return client.resolve_one(name, domain=domain)
+
+    async def _alias_lookup(self, name: str, *, domain: str = "") -> HAEntity | None:
+        memory = self.ctx.service("memory")
+        if memory is None:
+            return None
+        client = self.home.require_ha()
+        for candidate in await memory.find_entities(name, kind="ha_entity"):
+            if domain and candidate.attributes.get("domain") != domain:
+                continue
+            try:
+                return client.resolve_one(candidate.name, domain=domain)
+            except IntegrationError:
+                continue  # the taught name no longer matches a live entity
+        return None
+
     # ----------------------------------------------------------------- lookup
 
     @tool("List smart home devices, optionally filtered by type or room.")
@@ -63,8 +100,8 @@ class HomeSkill(Skill):
         self,
         name: Annotated[str, Param("Device name", examples=("kitchen light", "front door"))],
     ) -> str:
-        client = self.home.require_ha()
-        return client.resolve_one(name).describe()
+        entity = await self._resolve(name)
+        return entity.describe()
 
     @tool("Get a summary of everything currently on in the home.")
     async def whats_on(self) -> str:
@@ -79,6 +116,31 @@ class HomeSkill(Skill):
         names = ", ".join(e.friendly_name for e in active[:20])
         return f"{len(active)} device{'s' if len(active) != 1 else ''} on: {names}."
 
+    @tool(
+        "Teach another name for a smart home device — a brand name, room nickname or anything "
+        "the user prefers to call it instead of its Home Assistant name. Use this once you've "
+        "worked out what device someone means by a name that did not resolve on its own, so it "
+        "resolves immediately next time."
+    )
+    async def remember_device_alias(
+        self,
+        device: Annotated[str, Param("The device, findable by its current Home Assistant name")],
+        alias: Annotated[str, Param("The alternate name to remember for it")],
+    ) -> str:
+        entity = await self._resolve(device)
+        memory = self.ctx.service("memory")
+        if memory is None:
+            raise IntegrationError("home assistant", "memory is not available to remember that")
+        await memory.upsert_entity(
+            MemoryEntity(
+                kind="ha_entity",
+                name=entity.friendly_name,
+                aliases=[alias],
+                attributes={"domain": entity.domain, "area": entity.area},
+            )
+        )
+        return f"Got it — I'll know {entity.friendly_name} as '{alias}' too."
+
     # ---------------------------------------------------------------- control
 
     @tool("Turn a device on or off.", mutating=True)
@@ -88,7 +150,7 @@ class HomeSkill(Skill):
         state: Annotated[Literal["on", "off"], Param("Desired state")],
     ) -> str:
         client = self.home.require_ha()
-        entity = client.resolve_one(name)
+        entity = await self._resolve(name)
         return await (client.turn_on if state == "on" else client.turn_off)(entity.entity_id)
 
     @tool("Set the brightness of a light as a percentage.", mutating=True)
@@ -98,7 +160,7 @@ class HomeSkill(Skill):
         percent: Annotated[int, Param("Brightness from 0 to 100")],
     ) -> str:
         client = self.home.require_ha()
-        entity = client.resolve_one(name, domain="light")
+        entity = await self._resolve(name, domain="light")
         return await client.set_brightness(entity.entity_id, percent)
 
     @tool("Set the colour of a light by name.", mutating=True)
@@ -108,7 +170,7 @@ class HomeSkill(Skill):
         colour: Annotated[str, Param("Colour name, e.g. 'warm white', 'red', 'blue'")],
     ) -> str:
         client = self.home.require_ha()
-        entity = client.resolve_one(name, domain="light")
+        entity = await self._resolve(name, domain="light")
         await client.call_service("light", "turn_on", entity.entity_id, color_name=colour.lower())
         return f"set {entity.friendly_name} to {colour}"
 
@@ -119,7 +181,7 @@ class HomeSkill(Skill):
         temperature: Annotated[float, Param("Target temperature in the configured units")],
     ) -> str:
         client = self.home.require_ha()
-        entity = client.resolve_one(name, domain="climate")
+        entity = await self._resolve(name, domain="climate")
         return await client.set_temperature(entity.entity_id, temperature)
 
     @tool("Activate a scene.", mutating=True)
@@ -127,7 +189,7 @@ class HomeSkill(Skill):
         self, name: Annotated[str, Param("Scene name", examples=("movie night", "bedtime"))]
     ) -> str:
         client = self.home.require_ha()
-        entity = client.resolve_one(name, domain="scene")
+        entity = await self._resolve(name, domain="scene")
         return await client.activate_scene(entity.entity_id)
 
     @tool("Run a Home Assistant automation or script.", mutating=True)
@@ -149,7 +211,7 @@ class HomeSkill(Skill):
         action: Annotated[Literal["lock", "unlock"], Param("What to do")],
     ) -> str:
         client = self.home.require_ha()
-        entity = client.resolve_one(name, domain="lock")
+        entity = await self._resolve(name, domain="lock")
         await client.call_service("lock", action, entity.entity_id)
         return f"{action}ed {entity.friendly_name}"
 
@@ -160,7 +222,7 @@ class HomeSkill(Skill):
         action: Annotated[Literal["open", "close", "stop"], Param("What to do")],
     ) -> str:
         client = self.home.require_ha()
-        entity = client.resolve_one(name, domain="cover")
+        entity = await self._resolve(name, domain="cover")
         await client.call_service("cover", f"{action}_cover", entity.entity_id)
         return f"{action}ing {entity.friendly_name}"
 
@@ -174,7 +236,7 @@ class HomeSkill(Skill):
         ],
     ) -> str:
         client = self.home.require_ha()
-        entity = client.resolve_one(name, domain="media_player")
+        entity = await self._resolve(name, domain="media_player")
         service = {
             "play": "media_play",
             "pause": "media_pause",

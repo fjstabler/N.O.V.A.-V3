@@ -119,6 +119,20 @@ def test_entity_upsert_merges_attributes(tmp_path: Path) -> None:
     assert merged.attributes == {"ip": "10.0.0.5", "os": "TrueNAS"}
 
 
+def test_entity_upsert_accumulates_aliases_instead_of_overwriting(tmp_path: Path) -> None:
+    """A second taught alias must not erase the first, and a routine re-index
+    of live state (which always resupplies the same one or two aliases) must
+    not undo an alias a person taught in between."""
+    store = make_store(tmp_path)
+    store.upsert_entity(Entity(kind="ha_entity", name="Ceiling Light", aliases=["light.ceiling"]))
+    store.upsert_entity(Entity(kind="ha_entity", name="Ceiling Light", aliases=["the lamp"]))
+    merged = store.upsert_entity(
+        Entity(kind="ha_entity", name="Ceiling Light", aliases=["light.ceiling"])
+    )
+
+    assert merged.aliases == ["light.ceiling", "the lamp"]
+
+
 def test_conversation_turns_come_back_in_order(tmp_path: Path) -> None:
     store = make_store(tmp_path)
     store.start_conversation("conv-1")

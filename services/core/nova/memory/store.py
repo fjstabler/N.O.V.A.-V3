@@ -330,7 +330,22 @@ class MemoryStore:
     # --------------------------------------------------------------- entities
 
     def upsert_entity(self, entity: Entity) -> Entity:
+        """Insert an entity, or merge into the existing row for (kind, name).
+
+        Aliases accumulate rather than overwrite: teaching a second alias for
+        the same device must not erase the first one, and the periodic
+        re-index of live entities (which always supplies the same one or two
+        aliases) must not undo aliases a person taught in between.
+        """
         now = time.time()
+        existing = self._db.execute(
+            "SELECT aliases FROM entities WHERE kind = ? AND name = ?", (entity.kind, entity.name)
+        ).fetchone()
+        aliases = list(_loads(existing["aliases"], [])) if existing is not None else []
+        for alias in entity.aliases:
+            if alias not in aliases:
+                aliases.append(alias)
+
         self._db.execute(
             """INSERT INTO entities(kind, name, aliases, attributes, updated_at)
                VALUES (?,?,?,?,?)
@@ -341,7 +356,7 @@ class MemoryStore:
             (
                 entity.kind,
                 entity.name,
-                json.dumps(entity.aliases),
+                json.dumps(aliases),
                 json.dumps(entity.attributes),
                 now,
             ),
