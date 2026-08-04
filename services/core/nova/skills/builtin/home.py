@@ -16,6 +16,11 @@ class HomeSkill(Skill):
     name = "home"
     description = "Control lights, switches, climate, scenes and devices in the smart home."
     category = "Home"
+    prompt_hint = (
+        "For the current state of any light, switch, climate or other device — or to turn "
+        "one on, off, or change it — call a home tool. Never answer from memory or a guess: "
+        "a past conversation may be stale, but the tool always reflects what is true right now."
+    )
 
     def is_available(self) -> tuple[bool, str]:
         home = self.ctx.service("home", HomeService)
