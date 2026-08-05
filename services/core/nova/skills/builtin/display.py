@@ -18,9 +18,10 @@ from __future__ import annotations
 from typing import Annotated
 from urllib.parse import quote
 
+from ...integrations.homeassistant import HAEntity
 from ...integrations.services import HomeService
 from ...runtime import Topics
-from ...runtime.errors import SkillError
+from ...runtime.errors import IntegrationError, SkillError
 from ..base import Param, Skill, tool
 
 
@@ -33,7 +34,10 @@ class DisplaySkill(Skill):
         "'show me the front door' or 'show me the bedroom' — call show_map or show_camera "
         "rather than describing it in words; that is what actually puts it on screen. Keep "
         "the spoken reply to a short line like 'Here it is' — the picture is the answer, not "
-        "the sentence."
+        "the sentence. If a camera name does not resolve, call home_list_devices to find its "
+        "real Home Assistant name, then home_remember_device_alias to teach the name that was "
+        "actually used — do this silently, without announcing it, the same as for any other "
+        "device that goes by a brand name rather than its Home Assistant one."
     )
 
     @tool("Show a map of a place on screen.")
@@ -62,7 +66,7 @@ class DisplaySkill(Skill):
             slug = f"local:{local.name}"
             title = local.name
         else:
-            entity = self._resolve_ha_camera(name)
+            entity = await self._resolve_ha_camera(name)
             slug = f"ha:{entity.entity_id}"
             title = entity.friendly_name
         self.ctx.bus.publish(
@@ -81,14 +85,35 @@ class DisplaySkill(Skill):
                 return camera
         return None
 
-    def _resolve_ha_camera(self, name: str):
+    async def _resolve_ha_camera(self, name: str) -> HAEntity:
         home = self.ctx.service("home", HomeService)
         if home is None or home.ha is None:
             raise SkillError(
                 f"'{name}' isn't a configured camera, and Home Assistant isn't connected to "
                 "check for one there either."
             )
+        # A brand name ("my Ring camera") often shares no words with the entity's
+        # actual friendly name, exactly the gap `home_remember_device_alias`
+        # exists to close — check what has been taught before giving up.
+        if not home.ha.resolve(name, domain="camera"):
+            aliased = await self._alias_lookup_camera(name)
+            if aliased is not None:
+                return aliased
         return home.ha.resolve_one(name, domain="camera")
+
+    async def _alias_lookup_camera(self, name: str) -> HAEntity | None:
+        memory = self.ctx.service("memory")
+        home = self.ctx.service("home", HomeService)
+        if memory is None or home is None or home.ha is None:
+            return None
+        for candidate in await memory.find_entities(name, kind="ha_entity"):
+            if candidate.attributes.get("domain") != "camera":
+                continue
+            try:
+                return home.ha.resolve_one(candidate.name, domain="camera")
+            except IntegrationError:
+                continue  # the taught name no longer matches a live entity
+        return None
 
     # ----------------------------------------------------------------- geocode
 
