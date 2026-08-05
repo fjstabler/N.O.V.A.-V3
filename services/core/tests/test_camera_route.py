@@ -98,11 +98,11 @@ async def test_a_local_camera_is_captured_by_configured_index(
 
     captured: list[int] = []
 
-    def fake_capture(index: int, **_: Any) -> bytes:
+    async def fake_snapshot(index: int, **_: Any) -> bytes:
         captured.append(index)
         return b"\xff\xd8fake-jpeg"
 
-    monkeypatch.setattr("nova.transport.server.capture_camera_jpeg", fake_capture)
+    monkeypatch.setattr("nova.transport.server.local_camera_pool.snapshot_jpeg", fake_snapshot)
 
     response = await bridge._camera_response(
         FakeRequest("/camera/local:bedroom"), "/camera/local:bedroom"

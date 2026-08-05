@@ -31,7 +31,7 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from ..context import NovaContext
-from ..integrations.local_camera import capture_camera_jpeg
+from ..integrations.local_camera import local_camera_pool
 from ..integrations.services import HomeService
 from ..runtime import Service, Topics
 from ..runtime.errors import ConfirmationRequired, NovaError
@@ -144,6 +144,8 @@ class BridgeService(Service):
             self._server.close()
             with contextlib.suppress(Exception):
                 await self._server.wait_closed()
+        with contextlib.suppress(Exception):
+            await local_camera_pool.release_all()
         with contextlib.suppress(OSError):
             self._descriptor_path.unlink(missing_ok=True)
 
@@ -204,7 +206,7 @@ class BridgeService(Service):
             )
             if camera is not None:
                 try:
-                    image = await asyncio.to_thread(capture_camera_jpeg, camera.index)
+                    image = await local_camera_pool.snapshot_jpeg(camera.index)
                 except Exception as exc:  # noqa: BLE001 - a camera glitch should not crash the bridge
                     self.log.warning(
                         "local_camera_snapshot_failed", name=identifier, error=str(exc)
