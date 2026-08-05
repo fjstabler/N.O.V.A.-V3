@@ -117,7 +117,16 @@ class WakeWordDetector:
         score = self.process(frame)
         self._peak = max(self._peak, score)
 
-        if score < self.sensitivity:
+        # `sensitivity` is documented, and shown in settings, as "higher =
+        # easier to trigger" — the everyday sense of a sensitive detector.
+        # The model's score needs to clear a bar to count as a hit, so the
+        # bar itself has to move the opposite way: turning sensitivity up
+        # lowers how confident the model has to be, not raises it. Comparing
+        # the score against `sensitivity` directly here — instead of against
+        # its complement — silently inverted the setting: maximum sensitivity
+        # demanded the single strictest, most confident match possible.
+        threshold = 1.0 - self.sensitivity
+        if score < threshold:
             self._streak = 0
             return False
 
