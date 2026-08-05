@@ -24,6 +24,24 @@
   const SAMPLE_RATE = 16000; // matches nova.voice.audio.SAMPLE_RATE
   const MAX_RECORD_MS = 30_000;
 
+  // iOS Safari only allows speechSynthesis.speak() while still inside a user
+  // gesture's call stack. A reply always arrives after an await (the network
+  // round trip), by which point that window has closed and speak() silently
+  // does nothing — no error, it just never speaks. Speaking once, right here,
+  // synchronously on the very first tap anywhere on the page, unlocks the
+  // engine for the rest of the session, including later calls made from a
+  // promise callback. An all-but-silent single space is enough to unlock it.
+  window.addEventListener(
+    'pointerdown',
+    () => {
+      if (!('speechSynthesis' in window)) return;
+      const primer = new SpeechSynthesisUtterance(' ');
+      primer.volume = 0;
+      window.speechSynthesis.speak(primer);
+    },
+    { once: true },
+  );
+
   const el = {
     statusDot: document.getElementById('status-dot'),
     statusText: document.getElementById('status-text'),
