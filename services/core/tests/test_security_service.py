@@ -217,6 +217,26 @@ async def test_a_single_unknown_frame_does_not_yet_alert(
     assert service._consecutive_unknown == 1
 
 
+async def test_the_first_ever_alert_fires_on_a_freshly_booted_clock(
+    ctx: NovaContext, fake_ntfy: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: time.monotonic() counts from an arbitrary reference point
+    (often boot time), not the epoch. A machine that has been up for less
+    than alert_cooldown_seconds must still raise its first-ever alert — this
+    pins that down with a clock that is explicitly still near zero, rather
+    than relying on this environment's own uptime to happen to exceed the
+    cooldown, which is exactly what let this slip through twice before."""
+    monkeypatch.setattr(security_service_module.time, "monotonic", lambda: 5.0)
+    configure(ctx, confirm_frames=1, alert_cooldown_seconds=120)
+    service = make_service(ctx)
+    service.faces.add("Fin", [1.0, 0.0, 0.0, 0.0])
+    service.engine.observe = lambda frame: [unknown_face()]  # type: ignore[method-assign]
+
+    await service._check_once(0)
+
+    assert len(fake_ntfy) == 1
+
+
 async def test_consecutive_unknown_frames_trigger_every_channel(
     ctx: NovaContext, fake_ntfy: list[dict[str, Any]]
 ) -> None:
@@ -304,7 +324,10 @@ async def test_ntfy_topic_is_generated_once_and_reused(
     generated = ctx.settings.security.ntfy_topic
     assert generated  # a topic now exists, unprompted
 
-    service._last_alert_at = 0.0  # bypass cooldown to trigger a second alert
+    # -inf, not 0.0: time.monotonic() counts from an arbitrary reference
+    # point, so 0.0 is not reliably "in the past" — see the same reasoning
+    # on SecurityService's own _last_alert_at sentinel.
+    service._last_alert_at = float("-inf")  # bypass cooldown to trigger a second alert
     await service._check_once(0)
 
     assert fake_ntfy[0]["topic"] == generated
