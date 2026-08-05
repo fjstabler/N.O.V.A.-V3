@@ -272,7 +272,11 @@ class DeveloperSettings(BaseModel):
 
 
 class TransportSettings(BaseModel):
-    host: str = Field(default="127.0.0.1", description="Loopback only unless you know why")
+    host: str = Field(
+        default="127.0.0.1",
+        description="Loopback by default. A Tailscale address reaches other devices on your "
+        "tailnet (e.g. the mobile web client); anything else needs a real reason.",
+    )
     port: int = Field(default=8765, ge=1024, le=65535)
     #: Shared secret the UI presents on connect; generated on first run.
     token: str = Secret

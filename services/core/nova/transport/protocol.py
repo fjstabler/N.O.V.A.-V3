@@ -121,6 +121,7 @@ class Requests(StrEnum):
     VOICE_ACTIVATE = "voice.activate"
     VOICE_CANCEL = "voice.cancel"
     TEXT_SUBMIT = "text.submit"
+    VOICE_AUDIO_SUBMIT = "voice.audio.submit"
     CONFIRM = "action.confirm"
     METRICS_GET = "system.metrics.get"
     SERVICES_GET = "system.services.get"

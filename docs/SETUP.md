@@ -159,6 +159,40 @@ Supported kinds: `adguard`, `uptime-kuma`, `jellyfin`, `plex`, `immich`,
 Add a CalDAV account under **Calendar → Accounts**. Events are stored locally
 first and pushed on sync, so scheduling by voice never waits on the network.
 
+### Mobile web client (e.g. an iPhone, over Tailscale)
+
+The bridge that the desktop shell talks to also serves a small, no-build-step
+web client — push-to-talk plus a text fallback — from the same host and port.
+It has no wake word (a backgrounded phone tab cannot listen continuously the
+way the desktop app can), so it is push-to-talk by design, not a placeholder
+for one.
+
+1. **Expose the bridge on your tailnet.** Set **Connection → Host** to your
+   machine's Tailscale address (`tailscale ip -4`, or its MagicDNS name) rather
+   than `127.0.0.1`. The token gate is unchanged — Tailscale's private network
+   is the security boundary here, the same role loopback plays by default.
+2. **Get real HTTPS on that address**, which iOS requires before it will grant
+   microphone access to a web page:
+   ```bash
+   sudo tailscale cert your-machine.your-tailnet.ts.net
+   ```
+   Point something at the resulting cert/key to terminate TLS in front of the
+   bridge — a tiny reverse proxy (Caddy's `tailscale cert` integration, or
+   `caddy reverse-proxy --from :443 --to :8765`, is the least fuss) is enough;
+   N.O.V.A. itself still only speaks plain WebSocket/HTTP.
+3. **Open `https://<that address>/?token=<the token from Connection → Token>`**
+   on the phone once. It saves the token to the browser's local storage and
+   strips it from the address bar; you will not need to paste it again unless
+   you clear site data.
+4. **Add it to your Home Screen** from Safari's share sheet. It opens full
+   -screen from there, no browser chrome.
+
+Replies from the mobile client are read aloud by the phone's own
+text-to-speech, not the desktop's — the box at home does not also announce a
+question asked from somewhere else. Typed and spoken input both go through
+the same reasoning and tools as the desktop app; only where the reply is
+*heard* differs.
+
 ## Environment overrides
 
 Any setting can be overridden with an environment variable, which is useful for

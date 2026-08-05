@@ -1,13 +1,20 @@
 """The local WebSocket bridge the desktop shell connects to.
 
-Bound to loopback and gated on a shared token that is generated on first run and
-handed to the shell through a runtime descriptor file. That combination stops
-any other process on the machine — or a page in a stray browser — from driving
-the assistant.
+Bound to loopback by default and gated on a shared token that is generated on
+first run and handed to the shell through a runtime descriptor file. That
+combination stops any other process on the machine — or a page in a stray
+browser — from driving the assistant. Setting `transport.host` to a Tailscale
+address extends the same bridge to other devices on that private network (see
+`mobile_web/`) without weakening the token gate — Tailscale is the network
+boundary in that case, the same way loopback is the boundary by default.
 
 Bus events are mirrored to every connected client. High-frequency topics
 (audio level, metrics) are coalesced to a fixed rate so a 60 FPS UI never gets
 back-pressured by a 100 Hz producer.
+
+Plain HTTP GETs on the same host:port (i.e. anything that isn't a WebSocket
+upgrade) are served the mobile web client's static files, so one process and
+one port covers both the desktop shell's WebSocket and a phone's browser tab.
 """
 
 from __future__ import annotations
@@ -15,10 +22,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import mimetypes
 import os
 import sys
 import time
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from ..context import NovaContext
 from ..runtime import Service, Topics
@@ -29,10 +39,49 @@ from .router import RequestRouter
 try:
     import websockets
     from websockets.asyncio.server import ServerConnection, serve
+    from websockets.datastructures import Headers
+    from websockets.http11 import Request, Response
 except ImportError:  # pragma: no cover - hard dependency, guarded for clarity
     websockets = None  # type: ignore[assignment]
     ServerConnection = Any  # type: ignore[misc,assignment]
     serve = None  # type: ignore[assignment]
+    Headers = Any  # type: ignore[misc,assignment]
+    Request = Any  # type: ignore[misc,assignment]
+    Response = Any  # type: ignore[misc,assignment]
+
+#: The mobile web client's built files: services/core/nova/mobile_web/static/.
+STATIC_ROOT = Path(__file__).resolve().parent.parent / "mobile_web" / "static"
+
+_CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".webmanifest": "application/manifest+json",
+}
+
+
+def resolve_static_path(root: Path, url_path: str) -> Path | None:
+    """Map a request path to a file under `root`, or None if there isn't one.
+
+    `/` and any path without a file extension serve `index.html` — a phone
+    reloading a deep link should still land on the app shell rather than a
+    404. Resolving the joined path and checking it is still inside `root`
+    stops `..` segments walking out of the static directory.
+    """
+    if not root.is_dir():
+        return None
+    path = urlsplit(url_path).path
+    relative = path.lstrip("/") or "index.html"
+    if "." not in Path(relative).name:
+        relative = "index.html"
+    candidate = (root / relative).resolve()
+    if root.resolve() not in candidate.parents and candidate != root.resolve():
+        return None
+    return candidate if candidate.is_file() else None
 
 
 #: Topics never forwarded to the UI — internal plumbing or secrets.
@@ -75,8 +124,9 @@ class BridgeService(Service):
             cfg.port,
             ping_interval=20,
             ping_timeout=20,
-            max_size=8 * 1024 * 1024,  # room for a base64 screenshot
-            compression=None,  # loopback; compression costs more than it saves
+            max_size=8 * 1024 * 1024,  # room for a base64 screenshot or a voice clip
+            compression=None,  # loopback (or a tailnet); compression costs more than it saves
+            process_request=self._process_request,
         )
         self._bound_port = _bound_port(self._server, cfg.port)
         self._write_runtime_descriptor()
@@ -98,6 +148,32 @@ class BridgeService(Service):
     def describe(self) -> str:
         host = self.ctx.settings.transport.host
         return f"{host}:{self._bound_port} · {len(self._clients)} client(s)"
+
+    # ----------------------------------------------------------- static files
+
+    async def _process_request(self, connection: ServerConnection, request: Request) -> Any:
+        """Serve the mobile web client over plain HTTP; let WS upgrades through.
+
+        `process_request` runs for every incoming request, upgrade or not.
+        Returning `None` tells the library to continue with the normal
+        WebSocket handshake; returning a `Response` answers the request
+        directly and closes the connection, which is what a phone's browser
+        needs for the HTML/JS/CSS it loads before it ever opens a socket.
+        """
+        if request.headers.get("Upgrade", "").lower() == "websocket":
+            return None
+        path = resolve_static_path(STATIC_ROOT, request.path)
+        if path is None:
+            return Response(404, "Not Found", Headers(), b"not found")
+        body = path.read_bytes()
+        content_type = _CONTENT_TYPES.get(path.suffix) or (
+            mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        )
+        headers = Headers()
+        headers["Content-Type"] = content_type
+        headers["Content-Length"] = str(len(body))
+        headers["Cache-Control"] = "no-cache"
+        return Response(200, "OK", headers, body)
 
     # ------------------------------------------------------------- descriptor
 

@@ -93,6 +93,10 @@ class Orchestrator(Service):
         self._turn_lock = asyncio.Lock()
         self._current: asyncio.Task[TurnResult] | None = None
         self._last_activity = 0.0
+        #: Source of the turn currently holding `_turn_lock`. Safe as plain
+        #: instance state rather than a parameter threaded through every
+        #: method, because the lock guarantees only one turn runs at a time.
+        self._current_source = "voice"
 
     async def on_start(self) -> None:
         self.bus.subscribe(Topics.TRANSCRIPT_FINAL, self._on_transcript)
@@ -151,6 +155,7 @@ class Orchestrator(Service):
 
     async def _run_turn(self, text: str, source: str) -> TurnResult:
         async with self._turn_lock:
+            self._current_source = source
             started = time.perf_counter()
             self._last_activity = time.time()
             self.bus.publish(
@@ -361,6 +366,11 @@ class Orchestrator(Service):
         return TurnResult(text=text, tools_used=tools_used or [])
 
     async def _synthesise(self, text: str) -> None:
+        # A mobile client speaks its own reply (the phone's own TTS voice) —
+        # the box at home must not also announce a query nobody there asked,
+        # possibly made by someone who is not even in the house.
+        if self._current_source == "mobile":
+            return
         voice = self.ctx.service("voice")
         if voice is not None and text.strip():
             await voice.speak(text)

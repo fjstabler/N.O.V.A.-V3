@@ -29,6 +29,7 @@ export const Requests = {
   VoiceActivate: 'voice.activate',
   VoiceCancel: 'voice.cancel',
   TextSubmit: 'text.submit',
+  VoiceAudioSubmit: 'voice.audio.submit',
   Confirm: 'action.confirm',
   MetricsGet: 'system.metrics.get',
   ServicesGet: 'system.services.get',

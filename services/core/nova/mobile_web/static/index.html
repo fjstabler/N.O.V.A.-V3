@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+  <title>N.O.V.A.</title>
+
+  <!-- iOS "Add to Home Screen": these matter more than manifest.webmanifest on iPhone. -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="N.O.V.A." />
+  <link rel="apple-touch-icon" href="/icon-512.png" />
+
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#05070d" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="bar">
+      <span class="dot" id="status-dot"></span>
+      <span id="status-text">Connecting…</span>
+    </header>
+
+    <section id="pairing" class="pairing" hidden>
+      <h1>Connect to N.O.V.A.</h1>
+      <p>Paste the connection token from Settings on the box at home.</p>
+      <input id="token-input" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="token" />
+      <button id="token-save">Connect</button>
+    </section>
+
+    <section id="conversation" class="conversation" aria-live="polite"></section>
+
+    <footer class="controls">
+      <form id="text-form" class="text-form">
+        <input id="text-input" type="text" placeholder="Type instead…" autocomplete="off" autocapitalize="sentences" />
+        <button type="submit" aria-label="Send">➤</button>
+      </form>
+
+      <button id="talk" class="talk" aria-label="Push to talk">
+        <span class="talk__ring"></span>
+        <span class="talk__label">Hold to talk</span>
+      </button>
+    </footer>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

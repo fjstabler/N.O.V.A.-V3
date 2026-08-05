@@ -11,6 +11,8 @@ Start order is derived from declared dependencies, not written here; see
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import contextlib
 import signal
 import sys
@@ -133,8 +135,59 @@ class NovaApplication:
             orchestrator = self.ctx.service("orchestrator", Orchestrator)
             if orchestrator is None:
                 raise NovaError("reasoning is unavailable")
-            result = await orchestrator.handle(text, source="text")
+            # The mobile client's text fallback sends source="mobile" so its
+            # replies stay off the home speaker, same as its voice input does;
+            # the desktop console omits it and keeps today's behaviour.
+            source = str(payload.get("source") or "text")
+            result = await orchestrator.handle(text, source=source)
             return {
+                "text": result.text,
+                "tools": result.tools_used,
+                "error": result.error,
+                "ms": result.duration_ms,
+            }
+
+        @route(Requests.VOICE_AUDIO_SUBMIT)
+        async def voice_audio_submit(payload: dict[str, Any]) -> dict[str, Any]:
+            """Push-to-talk from a remote client: a full recording, not a stream.
+
+            Used by the mobile web client — it has no wake word or endpointer of
+            its own, it just records while a button is held and sends the whole
+            utterance at once. Runs through the same transcriber and orchestrator
+            a local wake word would, so it gets the same tools, memory and
+            reasoning; only the reply's destination differs (see `source="mobile"`
+            in the orchestrator, which skips the local speaker for it).
+            """
+            voice = self.ctx.service("voice", VoiceService)
+            if voice is None or not voice.transcriber.loaded:
+                raise NovaError("speech recognition is unavailable")
+
+            raw = str(payload.get("audio", ""))
+            if not raw:
+                raise NovaError("no audio provided")
+            try:
+                audio = base64.b64decode(raw, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise NovaError("audio was not valid base64") from exc
+
+            transcript = await voice.transcriber.transcribe(audio)
+            if transcript.error:
+                raise NovaError(transcript.error)
+            if not transcript.usable:
+                return {
+                    "transcript": transcript.text,
+                    "text": "",
+                    "tools": [],
+                    "error": None,
+                    "ms": 0,
+                }
+
+            orchestrator = self.ctx.service("orchestrator", Orchestrator)
+            if orchestrator is None:
+                raise NovaError("reasoning is unavailable")
+            result = await orchestrator.handle(transcript.text, source="mobile")
+            return {
+                "transcript": transcript.text,
                 "text": result.text,
                 "tools": result.tools_used,
                 "error": result.error,
