@@ -216,6 +216,8 @@ class Topics:
     NOTIFICATION = "ui.notification"
     NOTIFICATION_DISMISS = "ui.notification.dismiss"
     CORE_PULSE = "ui.core.pulse"
+    UI_SURFACE_SHOW = "ui.surface.show"
+    UI_SURFACE_DISMISS = "ui.surface.dismiss"
 
     # telemetry + integrations
     METRICS = "system.metrics"

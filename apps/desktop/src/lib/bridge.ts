@@ -52,6 +52,7 @@ export class BridgeClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
   private connectionState: ConnectionState = 'connecting';
+  private descriptor: BridgeDescriptor | null = null;
 
   constructor(private readonly resolveDescriptor: () => Promise<BridgeDescriptor | null>) {}
 
@@ -67,6 +68,7 @@ export class BridgeClient {
       this.scheduleReconnect();
       return;
     }
+    this.descriptor = descriptor;
 
     const url = `ws://${descriptor.host}:${descriptor.port}/?token=${encodeURIComponent(descriptor.token)}`;
 
@@ -132,6 +134,19 @@ export class BridgeClient {
 
   get connected(): boolean {
     return this.socket?.readyState === WebSocket.OPEN;
+  }
+
+  /**
+   * Turns a relative path the core published (e.g. from a `ui.surface.show`
+   * event's `streamPath`) into a fetchable URL on the same host and token
+   * the WebSocket itself is using. The token never travels in a broadcast
+   * payload — this is the one place a caller needs it, right where it is
+   * already held for the socket connection.
+   */
+  resourceUrl(path: string): string | null {
+    if (!this.descriptor) return null;
+    const separator = path.includes('?') ? '&' : '?';
+    return `http://${this.descriptor.host}:${this.descriptor.port}${path}${separator}token=${encodeURIComponent(this.descriptor.token)}`;
   }
 
   get state(): ConnectionState {

@@ -18,6 +18,7 @@ import type {
   NovaState,
   ServiceHealthPayload,
   SettingsSection,
+  SurfacePayload,
 } from '@protocol';
 import { Topics } from '@protocol';
 import type { BridgeClient, ConnectionState } from '@/lib/bridge';
@@ -68,6 +69,10 @@ interface NovaStore {
   services: ServiceHealthPayload[];
   degraded: CapabilityNotice[];
 
+  /** What `display.show_map` / `show_camera` put on screen — not conversation
+   * history, a deliberate visual answer to something that was asked for. */
+  surface: SurfacePayload | null;
+
   settings: Settings | null;
   settingsSchema: SettingsSection[];
 
@@ -87,6 +92,9 @@ interface NovaStore {
 
   pushNotification: (notification: NotificationPayload) => void;
   dismissNotification: (id: string) => void;
+
+  showSurface: (surface: SurfacePayload) => void;
+  dismissSurface: () => void;
 
   setMetrics: (metrics: MetricsPayload) => void;
   upsertService: (service: ServiceHealthPayload) => void;
@@ -113,6 +121,7 @@ export const useNova = create<NovaStore>((set) => ({
   metrics: null,
   services: [],
   degraded: [],
+  surface: null,
   settings: null,
   settingsSchema: [],
   settingsOpen: false,
@@ -137,6 +146,9 @@ export const useNova = create<NovaStore>((set) => ({
     })),
   dismissNotification: (id) =>
     set((current) => ({ notifications: current.notifications.filter((n) => n.id !== id) })),
+
+  showSurface: (surface) => set({ surface }),
+  dismissSurface: () => set({ surface: null }),
 
   setMetrics: (metrics) => set({ metrics }),
   upsertService: (service) =>
@@ -244,6 +256,13 @@ export function wireBridge(client: BridgeClient): () => void {
       if (typeof payload.id === 'string') useNova.getState().dismissNotification(payload.id);
     }),
   );
+
+  unsubscribes.push(
+    client.on(Topics.UiSurfaceShow, (payload) => {
+      useNova.getState().showSurface(payload as unknown as SurfacePayload);
+    }),
+  );
+  unsubscribes.push(client.on(Topics.UiSurfaceDismiss, () => useNova.getState().dismissSurface()));
 
   unsubscribes.push(
     client.on(Topics.Metrics, (payload) => {

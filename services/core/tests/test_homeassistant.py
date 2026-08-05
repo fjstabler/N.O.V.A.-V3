@@ -80,3 +80,53 @@ async def test_a_call_with_no_entity_id_is_unaffected() -> None:
     await client.call_service("homeassistant", "reload_config_entry")
 
     assert calls[0]["payload"] == {}
+
+
+# --------------------------------------------------------------------- camera
+
+
+class FakeResponse:
+    def __init__(self, status_code: int, content: bytes = b"") -> None:
+        self.status_code = status_code
+        self.content = content
+
+
+class FakeHTTP:
+    def __init__(self, response: FakeResponse | Exception) -> None:
+        self._response = response
+        self.paths: list[str] = []
+
+    async def get(self, path: str) -> FakeResponse:
+        self.paths.append(path)
+        if isinstance(self._response, Exception):
+            raise self._response
+        return self._response
+
+
+async def test_camera_snapshot_returns_the_jpeg_bytes() -> None:
+    client = make_client()
+    client._http = FakeHTTP(FakeResponse(200, b"\xff\xd8fake-jpeg"))  # type: ignore[assignment]
+
+    image = await client.camera_snapshot_jpeg("camera.front_door")
+
+    assert image == b"\xff\xd8fake-jpeg"
+    assert client._http.paths == ["/camera_proxy/camera.front_door"]  # type: ignore[attr-defined]
+
+
+async def test_camera_snapshot_returns_none_on_a_non_200() -> None:
+    client = make_client()
+    client._http = FakeHTTP(FakeResponse(404))  # type: ignore[assignment]
+
+    assert await client.camera_snapshot_jpeg("camera.unplugged") is None
+
+
+async def test_camera_snapshot_returns_none_when_the_request_raises() -> None:
+    client = make_client()
+    client._http = FakeHTTP(ConnectionError("camera timed out"))  # type: ignore[assignment]
+
+    assert await client.camera_snapshot_jpeg("camera.flaky") is None
+
+
+async def test_camera_snapshot_returns_none_before_connecting() -> None:
+    client = make_client()  # _http is still None
+    assert await client.camera_snapshot_jpeg("camera.front_door") is None

@@ -217,6 +217,26 @@ class HomeAssistantClient:
                 raise IntegrationError("home assistant", f"'{text}' could mean: {names}")
         return matches[0]
 
+    # ------------------------------------------------------------------ camera
+
+    async def camera_snapshot_jpeg(self, entity_id: str) -> bytes | None:
+        """Fetch one current JPEG frame from a camera entity.
+
+        A snapshot, not a live stream — plenty to see who is at the door
+        without the bridge having to proxy continuous video, and it works
+        the same way regardless of what actually backs the camera in HA.
+        """
+        if self._http is None:
+            return None
+        try:
+            response = await self._http.get(f"/camera_proxy/{entity_id}")
+        except Exception as exc:  # noqa: BLE001 - a stalled camera should not break anything else
+            log.warning("camera_snapshot_failed", entity_id=entity_id, error=str(exc))
+            return None
+        if response.status_code != 200:
+            return None
+        return response.content
+
     # ---------------------------------------------------------------- commands
 
     async def call_service(

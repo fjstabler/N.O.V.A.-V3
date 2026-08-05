@@ -68,6 +68,8 @@ export const Topics = {
   Notification: 'ui.notification',
   NotificationDismiss: 'ui.notification.dismiss',
   CorePulse: 'ui.core.pulse',
+  UiSurfaceShow: 'ui.surface.show',
+  UiSurfaceDismiss: 'ui.surface.dismiss',
   Metrics: 'system.metrics',
   SettingsUpdated: 'settings.updated',
   HomeEvent: 'home.event',
@@ -100,6 +102,17 @@ export interface NotificationPayload {
   actions?: { id: string; label: string; token?: string }[];
   createdAt: number;
 }
+
+/**
+ * What `display.show_map` / `display.show_camera` put on screen — a map
+ * centred on a geocoded point, or a camera resolved to a snapshot path the
+ * frontend polls on an interval. `streamPath` is relative (e.g.
+ * `/camera/ha:camera.front_door`); the frontend appends the bridge's own
+ * host and token, since the core never puts a secret in a broadcast payload.
+ */
+export type SurfacePayload =
+  | { kind: 'map'; title: string; lat: number; lon: number }
+  | { kind: 'camera'; title: string; streamPath: string };
 
 export interface ServiceHealthPayload {
   name: string;

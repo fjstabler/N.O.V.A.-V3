@@ -14,6 +14,7 @@ import { Notifications } from '@/components/Notifications';
 import { NovaCore } from '@/components/NovaCore';
 import { SettingsPanel } from '@/components/SettingsPanel';
 import { ConnectionStatus, DeveloperReadout } from '@/components/StatusOverlay';
+import { Surface } from '@/components/Surface';
 import { TextConsole } from '@/components/TextConsole';
 import { BridgeClient, createDescriptorResolver } from '@/lib/bridge';
 import { useNova, wireBridge } from '@/state/store';
@@ -115,6 +116,7 @@ export function App(): JSX.Element {
       </div>
 
       <Notifications client={client} />
+      <Surface client={client} />
       <SettingsPanel client={client} />
       <TextConsole client={client} />
 

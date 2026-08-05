@@ -116,6 +116,27 @@ describe('connection', () => {
   });
 });
 
+describe('resourceUrl', () => {
+  it('is null before the descriptor has ever been resolved', () => {
+    const client = makeClient();
+    expect(client.resourceUrl('/camera/ha:camera.front_door')).toBeNull();
+  });
+
+  it('builds a URL on the descriptor host with the token appended', async () => {
+    const { client } = await connected();
+    expect(client.resourceUrl('/camera/ha:camera.front_door')).toBe(
+      'http://127.0.0.1:8765/camera/ha:camera.front_door?token=test-token',
+    );
+  });
+
+  it('appends the token with & when the path already has a query string', async () => {
+    const { client } = await connected();
+    expect(client.resourceUrl('/camera/x?t=1')).toBe(
+      'http://127.0.0.1:8765/camera/x?t=1&token=test-token',
+    );
+  });
+});
+
 describe('descriptor resolution', () => {
   /**
    * Regression: the resolver used to fabricate a descriptor with an empty token

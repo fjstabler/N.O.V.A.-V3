@@ -113,7 +113,8 @@ Paste an OpenAI key into **Reasoning → API key**. That is enough to talk to it
 Create a long-lived access token in your HA profile, then fill in
 **Home Assistant → URL and token**. N.O.V.A. opens a WebSocket subscription, so
 "is the kitchen light on" is answered from a live cache rather than by polling —
-correct the instant someone flips a physical switch.
+correct the instant someone flips a physical switch. Cameras are included by
+default — see **Showing things on screen** below for what that unlocks.
 
 ### MQTT
 
@@ -158,6 +159,49 @@ Supported kinds: `adguard`, `uptime-kuma`, `jellyfin`, `plex`, `immich`,
 
 Add a CalDAV account under **Calendar → Accounts**. Events are stored locally
 first and pushed on sync, so scheduling by voice never waits on the network.
+
+### Showing things on screen: maps and cameras
+
+"Show me a map of London" and "show me the front door" put something on the
+desktop app's display rather than describing it in words. Maps need nothing
+configured — they geocode through OpenStreetMap for free. A camera resolves
+against two sources under one name:
+
+**A Home Assistant camera** (a Ring doorbell, or anything else HA exposes as
+a `camera.*` entity) — nothing extra to set up beyond Home Assistant itself
+being connected; `camera` is one of the domains N.O.V.A. already syncs. Say
+"show me the front door" and it resolves by the entity's friendly name, the
+same fuzzy matching every other device gets.
+
+**A camera physically attached to the machine running the core** (a USB
+webcam, a laptop's built-in one) — add it under **Vision → Named cameras**
+with a name and a device index. On Linux, find the index with:
+
+```bash
+v4l2-ctl --list-devices
+```
+
+which lists each camera and the `/dev/videoN` path it owns — the `N` is the
+index. (`sudo apt install v4l-utils` if the command is not found.) A camera
+with only one device usually shows up as index `0`; a second one attached
+later is not guaranteed to land on `1` — the listing is the source of truth,
+not an assumption. Needs the same `opencv-python-headless` and `pillow`
+N.O.V.A. already uses for `look_at_camera` (part of the `vision` extra —
+see **Vision** below).
+
+If a name matches both a named local camera and an HA entity, the local one
+wins — it is what you explicitly configured, not a guess.
+
+### Vision
+
+**Vision → Enable** turns on `look_at_screen` and `look_at_camera` — the
+assistant describing what it sees, in words, as opposed to the display
+skill's maps and cameras above, which put the thing itself on screen. Needs
+its own extra:
+
+```bash
+pip install -e "services/core[vision]"
+```
 
 ### Mobile web client (e.g. an iPhone, over Tailscale)
 

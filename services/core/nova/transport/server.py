@@ -28,9 +28,11 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from ..context import NovaContext
+from ..integrations.local_camera import capture_camera_jpeg
+from ..integrations.services import HomeService
 from ..runtime import Service, Topics
 from ..runtime.errors import ConfirmationRequired, NovaError
 from .protocol import Kind, Message
@@ -152,16 +154,20 @@ class BridgeService(Service):
     # ----------------------------------------------------------- static files
 
     async def _process_request(self, connection: ServerConnection, request: Request) -> Any:
-        """Serve the mobile web client over plain HTTP; let WS upgrades through.
+        """Serve the mobile web client and camera snapshots over plain HTTP.
 
         `process_request` runs for every incoming request, upgrade or not.
         Returning `None` tells the library to continue with the normal
         WebSocket handshake; returning a `Response` answers the request
         directly and closes the connection, which is what a phone's browser
-        needs for the HTML/JS/CSS it loads before it ever opens a socket.
+        needs for the HTML/JS/CSS it loads before it ever opens a socket, and
+        what the desktop app's camera surface needs for a snapshot image.
         """
         if request.headers.get("Upgrade", "").lower() == "websocket":
             return None
+        url_path = urlsplit(request.path).path
+        if url_path.startswith("/camera/"):
+            return await self._camera_response(request, url_path)
         path = resolve_static_path(STATIC_ROOT, request.path)
         if path is None:
             return Response(404, "Not Found", Headers(), b"not found")
@@ -174,6 +180,65 @@ class BridgeService(Service):
         headers["Content-Length"] = str(len(body))
         headers["Cache-Control"] = "no-cache"
         return Response(200, "OK", headers, body)
+
+    # ------------------------------------------------------------------ camera
+
+    async def _camera_response(self, request: Request, url_path: str) -> Response:
+        """Serve one JPEG snapshot from a camera resolved by `display.show_camera`.
+
+        A snapshot on every request, not a persistent stream — the frontend
+        polls this on an interval instead of the bridge holding open a
+        continuous proxy, which stays well within what `process_request`'s
+        single-response model can do.
+        """
+        if not self._request_authorised(request):
+            return Response(401, "Unauthorized", Headers(), b"unauthorized")
+
+        slug = unquote(url_path.removeprefix("/camera/"))
+        source, _, identifier = slug.partition(":")
+        image: bytes | None = None
+
+        if source == "local" and identifier:
+            camera = next(
+                (c for c in self.ctx.settings.vision.named_cameras if c.name == identifier), None
+            )
+            if camera is not None:
+                try:
+                    image = await asyncio.to_thread(capture_camera_jpeg, camera.index)
+                except Exception as exc:  # noqa: BLE001 - a camera glitch should not crash the bridge
+                    self.log.warning(
+                        "local_camera_snapshot_failed", name=identifier, error=str(exc)
+                    )
+        elif source == "ha" and identifier:
+            home = self.ctx.service("home", HomeService)
+            if home is not None and home.ha is not None:
+                image = await home.ha.camera_snapshot_jpeg(identifier)
+
+        if image is None:
+            return Response(404, "Not Found", Headers(), b"camera unavailable")
+
+        headers = Headers()
+        headers["Content-Type"] = "image/jpeg"
+        headers["Content-Length"] = str(len(image))
+        headers["Cache-Control"] = "no-store"
+        return Response(200, "OK", headers, image)
+
+    def _request_authorised(self, request: Request) -> bool:
+        """Token check for a plain HTTP request — the WS path's `_authorised`
+        reads the same token from a live `connection`, this reads it from the
+        `Request` handed to `process_request` before any connection exists."""
+        expected = self.ctx.settings.transport.token
+        if not expected:
+            return True
+        _, _, query = request.path.partition("?")
+        for part in query.split("&"):
+            key, _, value = part.partition("=")
+            if key == "token":
+                return _constant_time_equals(value, expected)
+        header = request.headers.get("Authorization", "")
+        if header.startswith("Bearer "):
+            return _constant_time_equals(header[7:], expected)
+        return False
 
     # ------------------------------------------------------------- descriptor
 
@@ -229,19 +294,8 @@ class BridgeService(Service):
             self.log.info("ui_disconnected", clients=len(self._clients))
 
     def _authorised(self, connection: ServerConnection) -> bool:
-        expected = self.ctx.settings.transport.token
-        if not expected:
-            return True
         # Token arrives as ?token=… ; the shell reads it from the descriptor file.
-        _, _, query = str(connection.request.path).partition("?")
-        for part in query.split("&"):
-            key, _, value = part.partition("=")
-            if key == "token":
-                return _constant_time_equals(value, expected)
-        header = connection.request.headers.get("Authorization", "")
-        if header.startswith("Bearer "):
-            return _constant_time_equals(header[7:], expected)
-        return False
+        return self._request_authorised(connection.request)
 
     def _hello_message(self) -> Message:
         return Message(

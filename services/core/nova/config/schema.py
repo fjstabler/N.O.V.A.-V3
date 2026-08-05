@@ -153,6 +153,7 @@ class HomeAssistantSettings(BaseModel):
             "binary_sensor",
             "sensor",
             "person",
+            "camera",
         ]
     )
 
@@ -243,11 +244,31 @@ class HomeLabSettings(BaseModel):
     poll_interval_seconds: float = Field(default=60.0, ge=10.0, le=900.0)
 
 
+class NamedCamera(BaseModel):
+    """A local camera device N.O.V.A. can show a live view of by name.
+
+    Separate from `camera_index`, which is the one camera `look_at_camera`
+    describes by default — this is a list, so a machine with more than one
+    attached camera (a laptop's built-in one plus a USB webcam, say) can give
+    each a name to show by, the same way a Home Assistant camera entity has
+    a friendly name.
+    """
+
+    name: str = ""
+    index: int = 0
+
+    @field_validator("name")
+    @classmethod
+    def _default_name(cls, v: str) -> str:
+        return v.strip()
+
+
 class VisionSettings(BaseModel):
     enabled: bool = False
     screen_capture: bool = True
     camera_enabled: bool = False
     camera_index: int = 0
+    named_cameras: list[NamedCamera] = Field(default_factory=list)
     max_image_edge: int = Field(default=1280, ge=256, le=4096)
     jpeg_quality: int = Field(default=82, ge=40, le=100)
 

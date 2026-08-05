@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import io
 from typing import Annotated
 
 from ...ai.client import OpenAIClient
 from ...ai.orchestrator import Orchestrator
+from ...integrations.local_camera import capture_camera_rgb, encode_jpeg
 from ...runtime.errors import MissingDependency, SkillError
 from ..base import Param, Skill, tool
 
@@ -77,46 +77,19 @@ class VisionSkill(Skill):
             return self._encode(shot.rgb, shot.size.width, shot.size.height, "RGB")
 
     def _capture_camera(self, index: int) -> bytes:
-        try:
-            import cv2
-        except ImportError as exc:
-            raise MissingDependency("camera", "opencv-python-headless", "vision") from exc
-
-        capture = cv2.VideoCapture(index)
-        try:
-            if not capture.isOpened():
-                raise SkillError(f"camera {index} could not be opened")
-            # The first frame off a cold sensor is usually black; discard a few.
-            for _ in range(5):
-                capture.read()
-            ok, frame = capture.read()
-            if not ok or frame is None:
-                raise SkillError("the camera did not return an image")
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            height, width = rgb.shape[:2]
-            return self._encode(rgb.tobytes(), width, height, "RGB")
-        finally:
-            capture.release()
+        raw, width, height = capture_camera_rgb(index)
+        return self._encode(raw, width, height, "RGB")
 
     def _encode(self, raw: bytes, width: int, height: int, mode: str) -> bytes:
-        try:
-            from PIL import Image
-        except ImportError as exc:
-            raise MissingDependency("image encoding", "pillow", "vision") from exc
-
         settings = self.ctx.settings.vision
-        image = Image.frombytes(mode, (width, height), raw)
-        longest = max(image.size)
-        if longest > settings.max_image_edge:
-            scale = settings.max_image_edge / longest
-            image = image.resize(
-                (int(image.width * scale), int(image.height * scale)), Image.Resampling.LANCZOS
-            )
-        buffer = io.BytesIO()
-        image.convert("RGB").save(
-            buffer, format="JPEG", quality=settings.jpeg_quality, optimize=True
+        return encode_jpeg(
+            raw,
+            width,
+            height,
+            mode=mode,
+            max_edge=settings.max_image_edge,
+            quality=settings.jpeg_quality,
         )
-        return buffer.getvalue()
 
     async def _describe(self, question: str, image: bytes) -> str:
         encoded = base64.b64encode(image).decode("ascii")
