@@ -238,6 +238,22 @@ class VoiceService(Service):
 
         if self._state is ListenState.WAKE:
             if self.wake.loaded and self.wake.detected(frame):
+                if self.ctx.state.state is not NovaState.IDLE:
+                    # ListenState returns to WAKE the instant endpointing ends
+                    # (_finish_capture, below) so the *next* utterance can be
+                    # captured promptly — but transcription, reasoning and
+                    # speaking for the utterance just captured are usually
+                    # still in flight at that point, often for longer than the
+                    # wake detector's own cooldown. A stray retrigger during
+                    # that window (room echo, the tail of the same sentence)
+                    # used to start a second capture that raced the first
+                    # turn's state transitions and, if it ever produced a
+                    # transcript, got Orchestrator.handle() to cancel the
+                    # first turn outright before it could call a tool.
+                    # Gating on NovaState rather than resetting the detector's
+                    # own cooldown covers the whole turn, not just capture.
+                    self.log.info("wake_ignored_turn_in_flight", state=self.ctx.state.state.value)
+                    return
                 await self._begin_capture(triggered_by="wake")
             return
 
