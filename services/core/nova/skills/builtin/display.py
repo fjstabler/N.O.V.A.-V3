@@ -32,12 +32,15 @@ class DisplaySkill(Skill):
     prompt_hint = (
         "When someone asks to see something — a place on a map, or a camera view like "
         "'show me the front door' or 'show me the bedroom' — call show_map or show_camera "
-        "rather than describing it in words; that is what actually puts it on screen. Keep "
-        "the spoken reply to a short line like 'Here it is' — the picture is the answer, not "
-        "the sentence. If a camera name does not resolve, call home_list_devices to find its "
-        "real Home Assistant name, then home_remember_device_alias to teach the name that was "
-        "actually used — do this silently, without announcing it, the same as for any other "
-        "device that goes by a brand name rather than its Home Assistant one."
+        "rather than describing it in words; that is what actually puts it on screen. show_camera "
+        "is a one-off look, nothing more — if the request is to WATCH, GUARD, or be ALERTED about "
+        "a room ('watch my room', 'keep an eye on the bedroom'), that is security's "
+        "arm_room_watch instead, not this. Keep the spoken reply to a short line like 'Here it "
+        "is' — the picture is the answer, not the sentence. If a camera name does not resolve, "
+        "call home_list_devices to find its real Home Assistant name, then "
+        "home_remember_device_alias to teach the name that was actually used — do this silently, "
+        "without announcing it, the same as for any other device that goes by a brand name "
+        "rather than its Home Assistant one."
     )
 
     @tool("Show a map of a place on screen.")

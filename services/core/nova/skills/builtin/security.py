@@ -21,11 +21,14 @@ class SecuritySkill(Skill):
     description = "Arm or disarm room-watch, and teach it whose face to leave alone."
     category = "Security"
     prompt_hint = (
-        "Room-watch alerts on anyone in the camera's view who is not an enrolled face. Arm it "
-        "when asked to watch, guard, or keep an eye on a room ('arm the bedroom', 'I'm leaving, "
-        "watch my room'); disarm it when asked to stand down or when told someone expected is "
-        "about to be there. Use learn_face when someone says something like 'this is my face' "
-        "or 'remember what I look like' while presumably looking at the camera."
+        "Any request to WATCH, GUARD, KEEP AN EYE ON, or ALERT ON a room is arm_room_watch, "
+        "never anything else — not display's show_camera (that is a one-off look, not ongoing "
+        "protection), not a home device lookup. This applies even to short, ambiguous phrasing "
+        "like 'watch my room' or 'watch my bedroom' on its own — treat 'watch' aimed at a room "
+        "as this skill's keyword before considering any other tool. Disarm it when asked to "
+        "stand down, or when told someone expected is about to be there. Use learn_face when "
+        "someone says something like 'this is my face' or 'remember what I look like' while "
+        "presumably looking at the camera — that is enrollment, not a request to see anything."
     )
 
     @property
@@ -47,17 +50,22 @@ class SecuritySkill(Skill):
         enrolled = len(service.faces.names())
         return [f"Room-watch is stood down. {enrolled} face(s) enrolled."]
 
-    @tool("Arm room-watch: alert if anyone but an enrolled face is seen on the camera.")
+    @tool(
+        "Arm room-watch: start alerting if anyone but an enrolled face is seen on the camera. "
+        "This is what 'watch my room', 'watch the bedroom', 'guard my room' and similar mean — "
+        "ongoing protection, not a one-off look (that is display's show_camera instead)."
+    )
     async def arm_room_watch(self) -> str:
         return await self.service.arm()
 
-    @tool("Disarm room-watch.")
+    @tool("Disarm room-watch — stop alerting on unrecognised faces.")
     async def disarm_room_watch(self) -> str:
         return await self.service.disarm()
 
     @tool(
         "Enroll a face so room-watch recognises it and does not alert on it — "
-        "call while the person is looking at the camera."
+        "call while the person is looking at the camera. This is enrollment "
+        "('this is my face'), not a request to view or arm anything."
     )
     async def learn_face(
         self,

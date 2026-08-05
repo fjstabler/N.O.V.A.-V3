@@ -38,7 +38,13 @@ class SecurityService(Service):
         self.engine = FaceEngine(ctx.paths.models_dir)
         self.armed = False
         self._watch_task: asyncio.Task[None] | None = None
-        self._last_alert_at = 0.0
+        # -inf, not 0.0: time.monotonic() counts from an arbitrary reference
+        # point (often boot time), not the epoch. On a machine freshly up for
+        # less than alert_cooldown_seconds, `now - 0.0` looks smaller than the
+        # cooldown and the very first real alert gets silently swallowed as
+        # "still cooling down" — -inf makes the first check always pass
+        # regardless of what the clock's absolute value happens to be.
+        self._last_alert_at = float("-inf")
         self._consecutive_unknown = 0
 
     async def on_stop(self) -> None:
