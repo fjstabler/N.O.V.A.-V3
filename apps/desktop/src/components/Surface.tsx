@@ -2,37 +2,55 @@
  * The surface: a map or a live camera view, put on screen by `display.show_map`
  * / `display.show_camera` rather than described in words.
  *
- * A camera is a snapshot polled on an interval, not a persistent video stream
- * — the bridge serves one JPEG per request (see transport/server.py's
- * `_camera_response`), so this just asks for a fresh one every couple of
- * seconds and swaps the `src`. Plenty for "who's at the door"; nothing here
- * pretends to be a video call.
+ * A camera is a snapshot fetched again on every frame, not a persistent video
+ * stream — the bridge serves one JPEG per request (see transport/server.py's
+ * `_camera_response`). Nothing here pretends to be a video call, but the next
+ * request fires the moment the current image finishes loading (or fails)
+ * rather than on a fixed timer, so it runs at whatever rate the camera and
+ * the network can actually sustain instead of a guessed interval that is
+ * either slower than necessary or races ahead of a slow one.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { pulseCore } from '@/components/NovaCore';
 import type { BridgeClient } from '@/lib/bridge';
 import { useNova } from '@/state/store';
 
-const CAMERA_POLL_MS = 2000;
+//: A floor between frames so a very fast local camera cannot spam requests.
+const MIN_FRAME_GAP_MS = 120;
 //: Auto-dismiss so a camera left open does not poll forever after being forgotten.
 const AUTO_DISMISS_MS = 90_000;
 
 function CameraView({ client, streamPath }: { client: BridgeClient; streamPath: string }): JSX.Element {
   const [src, setSrc] = useState<string | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    const refresh = () => {
-      const url = client.resourceUrl(streamPath);
-      if (url) setSrc(`${url}&t=${Date.now()}`);
-    };
-    refresh();
-    const timer = setInterval(refresh, CAMERA_POLL_MS);
-    return () => clearInterval(timer);
+  const requestFrame = useCallback(() => {
+    const url = client.resourceUrl(streamPath);
+    if (url) setSrc(`${url}&t=${Date.now()}`);
   }, [client, streamPath]);
 
+  useEffect(() => {
+    requestFrame();
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [requestFrame]);
+
+  const scheduleNext = () => {
+    timerRef.current = setTimeout(requestFrame, MIN_FRAME_GAP_MS);
+  };
+
   if (!src) return <div className="surface__placeholder">Connecting…</div>;
-  return <img className="surface__image" src={src} alt="" />;
+  return (
+    <img
+      className="surface__image"
+      src={src}
+      alt=""
+      onLoad={scheduleNext}
+      onError={scheduleNext}
+    />
+  );
 }
 
 function MapView({ lat, lon }: { lat: number; lon: number }): JSX.Element {

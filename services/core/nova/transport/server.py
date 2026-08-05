@@ -86,6 +86,13 @@ def resolve_static_path(root: Path, url_path: str) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
+#: A live camera surface is refetched continuously and wants a fast round
+#: trip; vision.py's max_image_edge/jpeg_quality are tuned the other way —
+#: sharper, for a model that reads the image once — so this path uses its
+#: own, smaller defaults rather than those settings.
+_LIVE_CAMERA_MAX_EDGE = 800
+_LIVE_CAMERA_JPEG_QUALITY = 70
+
 #: Topics never forwarded to the UI — internal plumbing or secrets.
 _PRIVATE_PREFIXES = ("internal.", "secret.")
 
@@ -206,7 +213,11 @@ class BridgeService(Service):
             )
             if camera is not None:
                 try:
-                    image = await local_camera_pool.snapshot_jpeg(camera.index)
+                    image = await local_camera_pool.snapshot_jpeg(
+                        camera.index,
+                        max_edge=_LIVE_CAMERA_MAX_EDGE,
+                        quality=_LIVE_CAMERA_JPEG_QUALITY,
+                    )
                 except Exception as exc:  # noqa: BLE001 - a camera glitch should not crash the bridge
                     self.log.warning(
                         "local_camera_snapshot_failed", name=identifier, error=str(exc)
