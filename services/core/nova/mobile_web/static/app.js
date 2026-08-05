@@ -24,20 +24,27 @@
   const SAMPLE_RATE = 16000; // matches nova.voice.audio.SAMPLE_RATE
   const MAX_RECORD_MS = 30_000;
 
-  // iOS Safari only allows speechSynthesis.speak() while still inside a user
-  // gesture's call stack. A reply always arrives after an await (the network
-  // round trip), by which point that window has closed and speak() silently
-  // does nothing — no error, it just never speaks. Speaking once, right here,
-  // synchronously on the very first tap anywhere on the page, unlocks the
-  // engine for the rest of the session, including later calls made from a
-  // promise callback. An all-but-silent single space is enough to unlock it.
+  // WebKit does not hold its own strong reference to a SpeechSynthesisUtterance
+  // until playback actually begins — if the only reference is a variable local
+  // to the function that created it, iOS Safari's garbage collector can (and
+  // routinely does) reap it before speak() gets around to it. No error, it
+  // just never speaks. Keeping the live utterance here, outside any function
+  // scope, is what keeps it alive long enough to actually play.
+  let activeUtterance = null;
+
+  // iOS Safari also only allows speechSynthesis.speak() while still inside a
+  // user gesture's call stack. A reply always arrives after an await (the
+  // network round trip), by which point that window has closed and speak()
+  // silently does nothing. Speaking once, right here, synchronously on the
+  // very first tap anywhere on the page, unlocks the engine for the rest of
+  // the session, including later calls made from a promise callback.
   window.addEventListener(
     'pointerdown',
     () => {
       if (!('speechSynthesis' in window)) return;
-      const primer = new SpeechSynthesisUtterance(' ');
-      primer.volume = 0;
-      window.speechSynthesis.speak(primer);
+      activeUtterance = new SpeechSynthesisUtterance('.');
+      activeUtterance.volume = 0;
+      window.speechSynthesis.speak(activeUtterance);
     },
     { once: true },
   );
@@ -214,11 +221,16 @@
       return;
     }
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.onstart = () => setCoreState('speaking');
-    utterance.onend = () => setCoreState('idle');
-    utterance.onerror = () => setCoreState('idle');
-    window.speechSynthesis.speak(utterance);
+    // Assigned to the module-level activeUtterance, not a local — see the
+    // comment by its declaration. A local here is exactly the shape of the
+    // bug: it goes out of scope the moment this function returns, which is
+    // normally fine, except WebKit's GC treats "out of scope" as "collectible"
+    // even mid-utterance.
+    activeUtterance = new SpeechSynthesisUtterance(text);
+    activeUtterance.onstart = () => setCoreState('speaking');
+    activeUtterance.onend = () => setCoreState('idle');
+    activeUtterance.onerror = () => setCoreState('idle');
+    window.speechSynthesis.speak(activeUtterance);
   }
 
   async function handleResult(promise, userBubbleText) {
