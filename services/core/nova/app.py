@@ -66,7 +66,19 @@ class NovaApplication:
     # ---------------------------------------------------------------- assembly
 
     def _register_services(self) -> None:
-        """Declare the service graph. Order here is irrelevant — deps decide it."""
+        """Declare the service graph. Start order among services with no
+        `requires` on each other falls out of registration order below (see
+        `ServiceManager.resolve_order`) — which matters more than the name
+        "order is irrelevant" suggests. `SkillRegistry.on_start()` calls each
+        skill's `is_available()` exactly once, synchronously, during its own
+        start; a skill that checks `ctx.service(X)` there needs X registered,
+        and therefore started, before `SkillRegistry` below, or it reads that
+        service as not-yet-running and its tools never make it into the
+        model's catalogue — silently, for the rest of the process, since nothing
+        ever re-checks it (`reevaluate()` only fires for home/homelab/calendar
+        settings changes, not at boot). Home, HomeLab and Calendar are placed
+        correctly for exactly this reason; Security was not, until this comment.
+        """
         register = self.ctx.services.register
         register(BridgeService(self.ctx, self.router))
         register(MemoryService(self.ctx))
@@ -74,11 +86,11 @@ class NovaApplication:
         register(HomeService(self.ctx))
         register(HomeLabService(self.ctx))
         register(CalendarService(self.ctx))
+        register(SecurityService(self.ctx))
         register(SkillRegistry(self.ctx))
         register(Orchestrator(self.ctx))
         register(NotificationService(self.ctx))
         register(VoiceService(self.ctx))
-        register(SecurityService(self.ctx))
 
     def _register_routes(self) -> None:
         """Every request the UI is allowed to make."""
