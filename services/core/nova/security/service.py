@@ -116,8 +116,13 @@ class SecurityService(Service):
         except asyncio.CancelledError:
             raise
         except Exception:
+            # A security feature that stops protecting without saying so is
+            # worse than one that never started — the person who armed it
+            # has no reason to think anything changed. Told the same way a
+            # real alert is: spoken and notified, independently of each other.
             self.log.exception("security_watch_failed")
             self.armed = False
+            await self._announce_watch_stopped()
 
     async def _check_once(self, index: int) -> None:
         try:
@@ -126,7 +131,11 @@ class SecurityService(Service):
             self.log.warning("security_frame_failed", error=str(exc))
             return
 
-        observations = await asyncio.to_thread(self.engine.observe, frame)
+        try:
+            observations = await asyncio.to_thread(self.engine.observe, frame)
+        except Exception as exc:  # noqa: BLE001 - a detection glitch must not stop the watch loop
+            self.log.warning("security_detect_failed", error=str(exc))
+            return
         if not observations:
             self._consecutive_unknown = 0
             return
@@ -193,6 +202,27 @@ class SecurityService(Service):
             message=settings.alert_message,
             click_url=self._mobile_camera_url(camera) if camera is not None else "",
         )
+
+    async def _announce_watch_stopped(self) -> None:
+        voice = self.ctx.service("voice")
+        if voice is not None:
+            await voice.speak(
+                "Room-watch has stopped because of an error. Say 'watch my room' to start it again."
+            )
+
+        notifications = self.ctx.service("notifications")
+        notification = Notification(
+            title="Room-watch stopped",
+            body="An error stopped room-watch. Say 'watch my room' to restart it.",
+            level=Level.WARNING,
+            icon="alert",
+            source=self.name,
+            timeout=0,
+        )
+        if notifications is not None:
+            await notifications.raise_notification(notification)
+        else:
+            self.bus.publish(Topics.NOTIFICATION, notification.as_payload(), source=self.name)
 
     def _ensure_topic(self) -> str:
         settings = self.ctx.settings.security

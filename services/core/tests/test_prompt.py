@@ -7,6 +7,18 @@ from nova.context import NovaContext
 from nova.memory.models import Memory
 
 
+def test_the_style_rules_forbid_promising_without_calling_the_tool(ctx: NovaContext) -> None:
+    """Regression: "Hey Nova, watch my room" got a spoken "I'll watch it" with
+    no security_arm_room_watch call anywhere in the logs — the model just
+    talked. The tool's own description already said this phrase means
+    arm_room_watch "never anything else", so the gap was not a missing
+    instruction on that one skill; it was that nothing told the model, in
+    general, that a verbal promise has to be backed by an actual call. This
+    pins the general rule down so any future skill gets it for free."""
+    prompt = build_system_prompt(ctx, [])
+    assert "no tool call behind it" in prompt
+
+
 def test_no_memory_section_when_nothing_was_recalled(ctx: NovaContext) -> None:
     prompt = build_system_prompt(ctx, [])
     assert "remember" not in prompt.lower()

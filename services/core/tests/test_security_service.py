@@ -364,3 +364,46 @@ async def test_click_url_points_at_the_camera_when_public_url_is_set(
     assert fake_ntfy[0]["click_url"] == (
         "https://box.tailnet.ts.net/?token=secret&camera=local%3Abedroom"
     )
+
+
+# ------------------------------------------------------------ failure modes
+
+
+async def test_a_detection_glitch_does_not_stop_the_watch_loop(ctx: NovaContext) -> None:
+    """Regression: only the camera read was guarded against raising, so a
+    face-detection error (cv2 choking on a malformed frame, a driver hiccup)
+    took the whole watch loop down — silently, since this was reached from
+    inside `_check_once`, one level below where anything tells the user."""
+    configure(ctx, confirm_frames=1)
+    service = make_service(ctx)
+    service.faces.add("Fin", [1.0, 0.0, 0.0, 0.0])
+
+    def explode(frame: Any) -> Any:
+        raise RuntimeError("boom")
+
+    service.engine.observe = explode  # type: ignore[method-assign]
+
+    await service._check_once(0)  # must not raise
+
+
+async def test_a_watch_loop_crash_tells_the_user_it_stopped(ctx: NovaContext) -> None:
+    """Regression: `_watch_loop` caught an unexpected crash and quietly set
+    `armed = False` — the person who armed it had no way to know room-watch
+    was no longer protecting anything."""
+    voice = FakeVoice()
+    notifications = FakeNotifications()
+    ctx.services.register(voice)  # type: ignore[arg-type]
+    ctx.services.register(notifications)  # type: ignore[arg-type]
+    service = make_service(ctx)
+    service.armed = True
+
+    async def explode(index: int) -> None:
+        raise RuntimeError("boom")
+
+    service._check_once = explode  # type: ignore[method-assign]
+
+    await service._watch_loop(0)
+
+    assert service.armed is False
+    assert voice.spoken and "stopped" in voice.spoken[0].lower()
+    assert notifications.raised and notifications.raised[0].title == "Room-watch stopped"
