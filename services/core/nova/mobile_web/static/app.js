@@ -24,31 +24,6 @@
   const SAMPLE_RATE = 16000; // matches nova.voice.audio.SAMPLE_RATE
   const MAX_RECORD_MS = 30_000;
 
-  // WebKit does not hold its own strong reference to a SpeechSynthesisUtterance
-  // until playback actually begins — if the only reference is a variable local
-  // to the function that created it, iOS Safari's garbage collector can (and
-  // routinely does) reap it before speak() gets around to it. No error, it
-  // just never speaks. Keeping the live utterance here, outside any function
-  // scope, is what keeps it alive long enough to actually play.
-  let activeUtterance = null;
-
-  // iOS Safari also only allows speechSynthesis.speak() while still inside a
-  // user gesture's call stack. A reply always arrives after an await (the
-  // network round trip), by which point that window has closed and speak()
-  // silently does nothing. Speaking once, right here, synchronously on the
-  // very first tap anywhere on the page, unlocks the engine for the rest of
-  // the session, including later calls made from a promise callback.
-  window.addEventListener(
-    'pointerdown',
-    () => {
-      if (!('speechSynthesis' in window)) return;
-      activeUtterance = new SpeechSynthesisUtterance('.');
-      activeUtterance.volume = 0;
-      window.speechSynthesis.speak(activeUtterance);
-    },
-    { once: true },
-  );
-
   const el = {
     statusDot: document.getElementById('status-dot'),
     statusText: document.getElementById('status-text'),
@@ -61,7 +36,51 @@
     stage: document.getElementById('stage'),
     stageCaption: document.getElementById('stage-caption'),
     stageLine: document.getElementById('stage-line'),
+    player: document.getElementById('player'),
   };
+
+  // Replies are read aloud through this one <audio> element, playing WAV
+  // bytes the core synthesises server-side (the same Kokoro voice the
+  // desktop hears) rather than through the browser's own speechSynthesis.
+  // That API sounded like the simpler route, but proved unreliable on real
+  // iOS hardware even after working around its user-gesture rule and its
+  // habit of garbage-collecting an utterance before it plays — it was just
+  // silent. An <audio> element unlocked once by a real play() inside a user
+  // gesture is the pattern iOS actually honours for everything after, which
+  // is why this reuses one element for every reply instead of creating a new
+  // Audio() each time — a fresh element would not carry the unlock forward.
+  window.addEventListener(
+    'pointerdown',
+    () => {
+      el.player.src = silentWavUrl();
+      el.player.play().catch(() => {});
+    },
+    { once: true },
+  );
+
+  function silentWavUrl() {
+    const sampleRate = 8000;
+    const buffer = new ArrayBuffer(46); // 44-byte header + one silent int16 sample
+    const view = new DataView(buffer);
+    const writeString = (offset, text) => {
+      for (let i = 0; i < text.length; i += 1) view.setUint8(offset + i, text.charCodeAt(i));
+    };
+    writeString(0, 'RIFF');
+    view.setUint32(4, 38, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM
+    view.setUint16(22, 1, true); // mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(36, 'data');
+    view.setUint32(40, 2, true);
+    view.setInt16(44, 0, true);
+    return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
+  }
 
   // ------------------------------------------------------------------ core
 
@@ -213,24 +232,21 @@
     return bubble;
   }
 
-  /** Speaks the reply and drives the Core's "speaking" state in step with
-   * actual playback, not just for the time it took to call speak(). */
-  function speak(text) {
-    if (!('speechSynthesis' in window) || !text.trim()) {
+  /** Plays the reply's server-synthesised audio and drives the Core's
+   * "speaking" state in step with actual playback. `base64Wav` is absent
+   * when TTS is unavailable server-side (Kokoro not loaded) — the reply
+   * still showed as text, it just is not read aloud, the same degrade the
+   * desktop app makes without Kokoro. */
+  function playReply(base64Wav) {
+    if (!base64Wav) {
       setCoreState('idle');
       return;
     }
-    window.speechSynthesis.cancel();
-    // Assigned to the module-level activeUtterance, not a local — see the
-    // comment by its declaration. A local here is exactly the shape of the
-    // bug: it goes out of scope the moment this function returns, which is
-    // normally fine, except WebKit's GC treats "out of scope" as "collectible"
-    // even mid-utterance.
-    activeUtterance = new SpeechSynthesisUtterance(text);
-    activeUtterance.onstart = () => setCoreState('speaking');
-    activeUtterance.onend = () => setCoreState('idle');
-    activeUtterance.onerror = () => setCoreState('idle');
-    window.speechSynthesis.speak(activeUtterance);
+    el.player.onplay = () => setCoreState('speaking');
+    el.player.onended = () => setCoreState('idle');
+    el.player.onerror = () => setCoreState('idle');
+    el.player.src = `data:audio/wav;base64,${base64Wav}`;
+    el.player.play().catch(() => setCoreState('idle'));
   }
 
   async function handleResult(promise, userBubbleText) {
@@ -261,7 +277,7 @@
       } else {
         pending.textContent = result.text;
         el.stageLine.textContent = result.text;
-        speak(result.text); // moves the Core into "speaking", then back to idle
+        playReply(result.audio); // moves the Core into "speaking", then back to idle
       }
     } catch (err) {
       if (userBubbleText === '…') userBubble.remove(); // never learned what, if anything, was heard

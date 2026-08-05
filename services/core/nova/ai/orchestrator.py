@@ -366,9 +366,10 @@ class Orchestrator(Service):
         return TurnResult(text=text, tools_used=tools_used or [])
 
     async def _synthesise(self, text: str) -> None:
-        # A mobile client speaks its own reply (the phone's own TTS voice) —
-        # the box at home must not also announce a query nobody there asked,
-        # possibly made by someone who is not even in the house.
+        # A mobile reply is synthesised separately for the phone that asked
+        # (see app.py's _mobile_audio) — the box at home must not also
+        # announce a query nobody there asked, possibly made by someone who
+        # is not even in the house.
         if self._current_source == "mobile":
             return
         voice = self.ctx.service("voice")

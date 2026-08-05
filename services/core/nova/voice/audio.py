@@ -14,8 +14,11 @@ stalling if a consumer falls behind.
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import queue
 import threading
+import wave
 from collections import deque
 from dataclasses import dataclass
 from typing import Any
@@ -247,6 +250,29 @@ class AudioOutput:
 
     def cancel(self) -> None:
         self._cancel.set()
+
+
+def samples_to_wav_base64(samples: Any, sample_rate: int) -> str | None:
+    """Encode a float32 numpy array as a base64 WAV clip.
+
+    For a client that plays audio itself rather than one this process drives
+    through a local speaker — the mobile web client, which has no PortAudio
+    device to hand a numpy array to and instead needs bytes it can hand to an
+    ``<audio>`` element.
+    """
+    try:
+        import numpy
+    except ImportError:
+        return None
+    pcm16 = numpy.clip(numpy.asarray(samples, dtype=numpy.float32), -1.0, 1.0)
+    pcm16 = (pcm16 * 32767).astype(numpy.int16)
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(pcm16.tobytes())
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
 def _rms(frame: bytes) -> float:

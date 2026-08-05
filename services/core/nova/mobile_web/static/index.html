@@ -40,6 +40,11 @@
 
     <section id="conversation" class="conversation" aria-live="polite"></section>
 
+    <!-- The one element every reply is played through — see app.js for why
+         reusing a single element (rather than a new Audio() per reply)
+         matters for staying unlocked on iOS. -->
+    <audio id="player" playsinline hidden></audio>
+
     <footer class="controls">
       <form id="text-form" class="text-form">
         <input id="text-input" type="text" placeholder="Type instead…" autocomplete="off" autocapitalize="sentences" />

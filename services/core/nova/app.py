@@ -31,6 +31,7 @@ from .system.service import SystemService
 from .transport.protocol import Requests
 from .transport.router import RequestRouter
 from .transport.server import BridgeService
+from .voice.audio import samples_to_wav_base64
 from .voice.service import VoiceService
 
 log = get_logger(__name__)
@@ -140,11 +141,13 @@ class NovaApplication:
             # the desktop console omits it and keeps today's behaviour.
             source = str(payload.get("source") or "text")
             result = await orchestrator.handle(text, source=source)
+            audio = await self._mobile_audio(result.text) if source == "mobile" else None
             return {
                 "text": result.text,
                 "tools": result.tools_used,
                 "error": result.error,
                 "ms": result.duration_ms,
+                "audio": audio,
             }
 
         @route(Requests.VOICE_AUDIO_SUBMIT)
@@ -186,12 +189,14 @@ class NovaApplication:
             if orchestrator is None:
                 raise NovaError("reasoning is unavailable")
             result = await orchestrator.handle(transcript.text, source="mobile")
+            audio = await self._mobile_audio(result.text)
             return {
                 "transcript": transcript.text,
                 "text": result.text,
                 "tools": result.tools_used,
                 "error": result.error,
                 "ms": result.duration_ms,
+                "audio": audio,
             }
 
         @route(Requests.CONFIRM)
@@ -284,6 +289,29 @@ class NovaApplication:
     def _voice_status(self) -> dict[str, Any]:
         voice = self.ctx.service("voice", VoiceService)
         return voice.status() if voice is not None else {"state": "unavailable"}
+
+    async def _mobile_audio(self, text: str) -> str | None:
+        """Synthesise a reply as base64 WAV for the mobile client's own player.
+
+        The mobile page used to read replies aloud with the browser's
+        speechSynthesis API. In practice that was unreliable on real iOS
+        hardware — silent even after working around its user-gesture rule and
+        its habit of garbage-collecting an utterance before it plays. Playing
+        a single, once-unlocked <audio> element is the pattern iOS actually
+        honours consistently, so replies destined for the mobile client are
+        rendered here with the same Kokoro voice the desktop hears, and
+        shipped as bytes instead.
+        """
+        if not text.strip():
+            return None
+        voice = self.ctx.service("voice", VoiceService)
+        if voice is None or not voice.synthesiser.loaded:
+            return None
+        result = await voice.synthesiser.synthesise(text)
+        if result is None:
+            return None
+        samples, sample_rate = result
+        return samples_to_wav_base64(samples, sample_rate)
 
     # --------------------------------------------------------------- lifecycle
 

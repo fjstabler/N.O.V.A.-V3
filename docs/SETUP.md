@@ -187,11 +187,14 @@ for one.
 4. **Add it to your Home Screen** from Safari's share sheet. It opens full
    -screen from there, no browser chrome.
 
-Replies from the mobile client are read aloud by the phone's own
-text-to-speech, not the desktop's — the box at home does not also announce a
-question asked from somewhere else. Typed and spoken input both go through
-the same reasoning and tools as the desktop app; only where the reply is
-*heard* differs.
+Replies from the mobile client are synthesised on the core with the same
+Kokoro voice the desktop hears, then sent to the phone and played there — not
+spoken through the desktop's speaker, so the box at home does not also
+announce a question asked from somewhere else. Typed and spoken input both go
+through the same reasoning and tools as the desktop app; only where the reply
+is *heard* differs. (An earlier version of this page used the phone's own
+browser voice instead; that was dropped after proving unreliable — silent
+more often than not — on real iOS hardware.)
 
 ## Environment overrides
 
