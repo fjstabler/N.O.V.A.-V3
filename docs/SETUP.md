@@ -240,6 +240,56 @@ is *heard* differs. (An earlier version of this page used the phone's own
 browser voice instead; that was dropped after proving unreliable — silent
 more often than not — on real iOS hardware.)
 
+### Room-watch: face recognition alerts
+
+"Watch my room" arms a camera to alert on anyone whose face is not one it
+recognises: N.O.V.A. speaks a warning immediately, shows a notification, and
+pushes an alert straight to your phone with a link to see the camera live.
+It is armed and disarmed by voice, never left running by default — partly
+because that is what makes sense for "while I'm out", partly because the
+camera's own light stays lit the whole time it is watching, which should be
+a choice made each time, not a silent permanent state.
+
+It needs the `vision` extra already installed (the same one the local
+webcam surface uses) and two small model files, both free, both from
+OpenCV's own model zoo:
+
+```bash
+python scripts/fetch_models.py --only face
+```
+
+1. **Have a named camera set up already** — see **Showing things on
+   screen** above. Room-watch reuses whichever entry you already have under
+   **Vision → Named cameras**.
+2. **Point Security → Camera** at that same name.
+3. **Enroll your face**: say something like *"this is my face"* while
+   looking at the camera. Say it again from another angle or in different
+   lighting any time — it adds to what is recognised rather than replacing
+   it.
+4. **Arm it**: *"watch my room"* / *"arm the bedroom"*. Say *"stand down"*
+   (or similar) to disarm.
+5. **Get the phone push working.** The first time you arm, a topic name is
+   generated and saved to **Security → Ntfy topic** — read it there, install
+   the free [ntfy app](https://ntfy.sh/) on your phone, and subscribe to
+   that exact topic name. Anyone who knows the topic name can see what gets
+   posted to it, so treat it like a password: don't share it, and if it ever
+   leaks, clear the field and arm again to generate a fresh one.
+6. **For the tap-through link to actually open the camera**, set
+   **Connection → Public URL** to the HTTPS address the mobile web client is
+   reachable at (see **Mobile web client** below) — e.g.
+   `https://your-machine.your-tailnet.ts.net`. This is deliberately not the
+   same as **Connection → Host**: a reverse proxy normally terminates HTTPS
+   on a different port than the core itself listens on. Left blank, every
+   other channel still fires — spoken warning, in-app notification, phone
+   push — just without a link straight to the live view.
+
+Nothing about a face is ever uploaded anywhere: a frame becomes a few
+hundred numbers (an embedding) describing it, entirely on this machine, and
+that is what gets compared and stored — not a photo. Recognition itself
+runs the same OpenCV models `look_at_camera` already depends on
+(`opencv-python-headless`), so nothing new needs installing beyond the two
+model files above.
+
 ## Environment overrides
 
 Any setting can be overridden with an environment variable, which is useful for

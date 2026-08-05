@@ -31,6 +31,7 @@ SECTIONS: list[tuple[str, str, str]] = [
     ("server", "Server", "Ubuntu monitoring and administration"),
     ("homelab", "Home Lab", "Self-hosted services"),
     ("vision", "Vision", "Screen and camera understanding"),
+    ("security", "Security", "Room-watch: face recognition alerts"),
     ("plugins", "Plugins", "Skill modules"),
     ("developer", "Developer", "Diagnostics and debugging"),
     ("transport", "Connection", "Local bridge between UI and core"),

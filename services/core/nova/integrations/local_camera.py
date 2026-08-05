@@ -38,7 +38,8 @@ def capture_camera_rgb(index: int) -> tuple[bytes, int, int]:
     """Grab one frame from a local camera device as raw RGB bytes."""
     capture = _open_camera(index)
     try:
-        return _read_frame(capture)
+        frame = _read_frame_bgr(capture)
+        return _bgr_to_rgb_bytes(frame)
     finally:
         capture.release()
 
@@ -60,12 +61,18 @@ def _open_camera(index: int) -> Any:
     return capture
 
 
-def _read_frame(capture: Any) -> tuple[bytes, int, int]:
-    import cv2
-
+def _read_frame_bgr(capture: Any) -> Any:
+    """Read one raw frame as a BGR numpy array — OpenCV's own native layout,
+    which is what both JPEG encoding and face detection start from."""
     ok, frame = capture.read()
     if not ok or frame is None:
         raise SkillError("the camera did not return an image")
+    return frame
+
+
+def _bgr_to_rgb_bytes(frame: Any) -> tuple[bytes, int, int]:
+    import cv2
+
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     height, width = rgb.shape[:2]
     return rgb.tobytes(), width, height
@@ -124,12 +131,19 @@ class LocalCameraPool:
         self._pool_lock = asyncio.Lock()
 
     async def snapshot_jpeg(self, index: int, *, max_edge: int = 1280, quality: int = 82) -> bytes:
+        frame = await self.read_bgr(index)
+        raw, width, height = await asyncio.to_thread(_bgr_to_rgb_bytes, frame)
+        return encode_jpeg(raw, width, height, max_edge=max_edge, quality=quality)
+
+    async def read_bgr(self, index: int) -> Any:
+        """Read one raw BGR frame — what face detection needs, unlike
+        `snapshot_jpeg`'s already-encoded bytes."""
         entry = await self._acquire(index)
         async with entry.lock:
-            raw, width, height = await asyncio.to_thread(_read_frame, entry.capture)
+            frame = await asyncio.to_thread(_read_frame_bgr, entry.capture)
             entry.last_used = time.monotonic()
         await self._reap_idle()
-        return encode_jpeg(raw, width, height, max_edge=max_edge, quality=quality)
+        return frame
 
     async def _acquire(self, index: int) -> _OpenCamera:
         async with self._pool_lock:

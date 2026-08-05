@@ -205,3 +205,43 @@ html, body {
   font-size: 1.1rem;
 }
 
+.camera-view {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.camera-view__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 1.1rem;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.camera-view__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.camera-view__close {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 1rem;
+}
+.camera-view__image {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  object-fit: contain;
+  background: #000;
+}
+

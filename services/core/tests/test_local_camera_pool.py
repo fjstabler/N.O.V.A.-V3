@@ -44,15 +44,19 @@ def fake_backend(monkeypatch: pytest.MonkeyPatch) -> tuple[list[int], dict[int, 
         captures[index] = capture
         return capture
 
-    def fake_read(capture: FakeCapture) -> tuple[bytes, int, int]:
+    def fake_read_bgr(capture: FakeCapture) -> Any:
         capture.read()
+        return "bgr-frame"
+
+    def fake_bgr_to_rgb(frame: Any) -> tuple[bytes, int, int]:
         return b"rgb-bytes", 4, 4
 
     def fake_encode(raw: bytes, width: int, height: int, **_: Any) -> bytes:
         return b"\xff\xd8jpeg"
 
     monkeypatch.setattr(local_camera, "_open_camera", fake_open)
-    monkeypatch.setattr(local_camera, "_read_frame", fake_read)
+    monkeypatch.setattr(local_camera, "_read_frame_bgr", fake_read_bgr)
+    monkeypatch.setattr(local_camera, "_bgr_to_rgb_bytes", fake_bgr_to_rgb)
     monkeypatch.setattr(local_camera, "encode_jpeg", fake_encode)
     return opens, captures
 
@@ -136,7 +140,7 @@ async def test_a_handle_mid_read_is_never_reaped_out_from_under_it(
         # Only the read is slow here — opening the device (also routed
         # through to_thread) must stay instant, or "started" would fire
         # before the handle even exists in the pool.
-        if fn is local_camera._read_frame:
+        if fn is local_camera._read_frame_bgr:
             started.set()
             await release_read.wait()
         return fn(*args)

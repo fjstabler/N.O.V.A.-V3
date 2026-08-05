@@ -26,6 +26,7 @@ from .memory.service import MemoryService
 from .notifications import NotificationService
 from .runtime import NovaState, Topics, configure_logging, get_logger
 from .runtime.errors import NovaError
+from .security.service import SecurityService
 from .skills.registry import SkillRegistry
 from .system.service import SystemService
 from .transport.protocol import Requests
@@ -77,6 +78,7 @@ class NovaApplication:
         register(Orchestrator(self.ctx))
         register(NotificationService(self.ctx))
         register(VoiceService(self.ctx))
+        register(SecurityService(self.ctx))
 
     def _register_routes(self) -> None:
         """Every request the UI is allowed to make."""

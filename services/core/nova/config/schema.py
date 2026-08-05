@@ -273,6 +273,40 @@ class VisionSettings(BaseModel):
     jpeg_quality: int = Field(default=82, ge=40, le=100)
 
 
+class SecuritySettings(BaseModel):
+    """Room-watch: alert when an unrecognised face is seen on a named camera.
+
+    Armed and disarmed by voice ("watch my room" / "stand down") rather than
+    left running continuously — partly because that is what was asked for,
+    partly because the camera's own indicator light stays lit the whole time
+    it is armed, which should be a deliberate choice each time, not a
+    permanent background state.
+
+    Deliberately no separate `enabled` toggle: arming needs a configured
+    camera and at least one enrolled face regardless, and every arm resets
+    to disarmed on restart — those already gate everything that matters,
+    so a fourth switch would only be one more silent way for the documented
+    setup steps to do nothing with no indication why.
+    """
+
+    #: Matches an entry in vision.named_cameras by name.
+    camera_name: str = ""
+    poll_interval_seconds: float = Field(default=1.5, ge=0.5, le=10.0)
+    #: Consecutive unrecognised-face detections required before alerting —
+    #: one odd frame (motion blur, a bad angle) should not be enough on its own.
+    confirm_frames: int = Field(default=2, ge=1, le=10)
+    #: Minimum time between alerts, so one visit does not fire repeatedly
+    #: while the person is still in frame.
+    alert_cooldown_seconds: float = Field(default=120.0, ge=10.0, le=3600.0)
+    #: SFace's own documented cosine-similarity threshold for "same person".
+    match_threshold: float = Field(default=0.363, ge=0.0, le=1.0)
+    alert_message: str = "You should not be in here. Fin has been alerted."
+    #: A free push-notification relay (ntfy.sh by default; self-hostable).
+    ntfy_server: str = Field(default="https://ntfy.sh")
+    #: Generated on first arm if left blank — see SecurityService._ensure_topic.
+    ntfy_topic: str = ""
+
+
 class PluginSettings(BaseModel):
     #: Skills disabled by name. Everything discovered is enabled by default.
     disabled: list[str] = Field(default_factory=list)
@@ -301,6 +335,14 @@ class TransportSettings(BaseModel):
     port: int = Field(default=8765, ge=1024, le=65535)
     #: Shared secret the UI presents on connect; generated on first run.
     token: str = Secret
+    public_url: str = Field(
+        default="",
+        description="The HTTPS address the mobile web client is actually reachable at "
+        "(e.g. https://your-machine.your-tailnet.ts.net) — the reverse proxy's address, "
+        "not host:port above, since a proxy normally terminates TLS on a different port. "
+        "Used to build a link straight to a camera in a push notification; left blank, "
+        "an alert still speaks, notifies and pushes, just without a tap-through link.",
+    )
 
 
 class AssistantSettings(BaseModel):
@@ -336,6 +378,7 @@ class NovaSettings(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
     homelab: HomeLabSettings = Field(default_factory=HomeLabSettings)
     vision: VisionSettings = Field(default_factory=VisionSettings)
+    security: SecuritySettings = Field(default_factory=SecuritySettings)
     plugins: PluginSettings = Field(default_factory=PluginSettings)
     developer: DeveloperSettings = Field(default_factory=DeveloperSettings)
     transport: TransportSettings = Field(default_factory=TransportSettings)

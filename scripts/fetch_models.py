@@ -27,6 +27,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 KOKORO_BASE = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
+#: YuNet (detection) and SFace (recognition) — OpenCV's own face models, Apache
+#: 2.0, small enough that they cost nothing extra to bundle with the rest.
+#: opencv-python-headless (already required for the camera surface) has native
+#: cv2.FaceDetectorYN / cv2.FaceRecognizerSF support for both, so face-watch
+#: needs no new Python dependency, only these two files.
+OPENCV_ZOO_BASE = "https://github.com/opencv/opencv_zoo/raw/main/models"
 
 
 @dataclass(frozen=True)
@@ -42,6 +48,20 @@ class Artifact:
 ARTIFACTS: tuple[Artifact, ...] = (
     Artifact("tts", "Kokoro voice model", f"{KOKORO_BASE}/kokoro-v1.0.onnx", "kokoro/kokoro-v1.0.onnx", 310),
     Artifact("tts", "Kokoro voice pack", f"{KOKORO_BASE}/voices-v1.0.bin", "kokoro/voices-v1.0.bin", 27),
+    Artifact(
+        "face",
+        "Face detector (YuNet)",
+        f"{OPENCV_ZOO_BASE}/face_detection_yunet/face_detection_yunet_2023mar.onnx",
+        "face/face_detection_yunet_2023mar.onnx",
+        1,
+    ),
+    Artifact(
+        "face",
+        "Face recognition (SFace)",
+        f"{OPENCV_ZOO_BASE}/face_recognition_sface/face_recognition_sface_2021dec.onnx",
+        "face/face_recognition_sface_2021dec.onnx",
+        38,
+    ),
 )
 
 
@@ -154,11 +174,15 @@ def main() -> int:
         print(f"Not enough free space: need ~{needed} MB, have {human(free)}", file=sys.stderr)
         return 1
 
-    print("Speech synthesis (Kokoro)")
+    group_labels = {"tts": "Speech synthesis (Kokoro)", "face": "Face recognition (YuNet + SFace)"}
     failures = 0
+    printed_group = None
     for artifact in ARTIFACTS:
         if args.only and artifact.group != args.only:
             continue
+        if artifact.group != printed_group:
+            printed_group = artifact.group
+            print(group_labels.get(artifact.group, artifact.group))
         if not download(artifact, target_dir / artifact.destination, force=args.force):
             failures += 1
 

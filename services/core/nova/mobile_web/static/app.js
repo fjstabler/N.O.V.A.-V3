@@ -37,6 +37,10 @@
     stageCaption: document.getElementById('stage-caption'),
     stageLine: document.getElementById('stage-line'),
     player: document.getElementById('player'),
+    cameraView: document.getElementById('camera-view'),
+    cameraViewTitle: document.getElementById('camera-view-title'),
+    cameraViewClose: document.getElementById('camera-view-close'),
+    cameraViewImage: document.getElementById('camera-view-image'),
   };
 
   // Replies are read aloud through this one <audio> element, playing WAV
@@ -124,6 +128,58 @@
     el.pairing.hidden = true;
     bridge.connect();
   });
+
+  // ---------------------------------------------------------- camera view
+
+  // A room-watch alert's push notification links straight here — see
+  // security/service.py's _mobile_camera_url — with the same slug format
+  // the desktop app's camera surface uses. Reading it once at load, rather
+  // than wiring live ui.surface.show events the way the desktop app does,
+  // is deliberate: this page only ever needs to show the one camera a
+  // notification pointed at, not react to arbitrary events mid-session.
+  const CAMERA_POLL_MIN_GAP_MS = 250;
+  let cameraPollTimer = null;
+
+  function titleFromCameraSlug(slug) {
+    const name = slug.includes(':') ? slug.slice(slug.indexOf(':') + 1) : slug;
+    return name.replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  function openCameraView(slug) {
+    const token = readToken();
+    if (!token) {
+      showPairing('paste the token, then reopen the camera link');
+      return;
+    }
+    el.cameraView.hidden = false;
+    el.cameraViewTitle.textContent = titleFromCameraSlug(slug);
+    const path = `/camera/${encodeURIComponent(slug)}`;
+    const fetchFrame = () => {
+      el.cameraViewImage.src = `${path}?token=${encodeURIComponent(token)}&t=${Date.now()}`;
+    };
+    el.cameraViewImage.onload = () => {
+      cameraPollTimer = setTimeout(fetchFrame, CAMERA_POLL_MIN_GAP_MS);
+    };
+    el.cameraViewImage.onerror = el.cameraViewImage.onload;
+    fetchFrame();
+  }
+
+  function closeCameraView() {
+    if (cameraPollTimer) clearTimeout(cameraPollTimer);
+    cameraPollTimer = null;
+    el.cameraViewImage.onload = null;
+    el.cameraViewImage.onerror = null;
+    el.cameraViewImage.src = '';
+    el.cameraView.hidden = true;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('camera');
+    window.history.replaceState({}, '', url.toString());
+  }
+
+  el.cameraViewClose.addEventListener('click', closeCameraView);
+
+  const cameraSlug = new URL(window.location.href).searchParams.get('camera');
+  if (cameraSlug) openCameraView(cameraSlug);
 
   // -------------------------------------------------------------- bridge
 
