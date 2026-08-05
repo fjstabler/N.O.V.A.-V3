@@ -11,7 +11,10 @@
  * Push-to-talk instead of a wake word: iOS suspends background tabs, so
  * always-listening detection from a phone browser is not achievable, and the
  * user explicitly chose hold-to-talk as the permanent design here rather
- * than a workaround to reach for later.
+ * than a workaround to reach for later. The Core itself (core.js) is the
+ * control — hold it to talk — the same way the desktop app is built around
+ * it rather than a row of buttons; this page mirrors that instead of being
+ * a generic chat window.
  */
 
 (() => {
@@ -30,9 +33,26 @@
     conversation: document.getElementById('conversation'),
     textForm: document.getElementById('text-form'),
     textInput: document.getElementById('text-input'),
-    talk: document.getElementById('talk'),
-    talkLabel: document.querySelector('.talk__label'),
+    stage: document.getElementById('stage'),
+    stageCaption: document.getElementById('stage-caption'),
+    stageLine: document.getElementById('stage-line'),
   };
+
+  // ------------------------------------------------------------------ core
+
+  const CAPTIONS = {
+    idle: 'Hold to talk',
+    listening: 'Listening…',
+    thinking: 'Thinking…',
+    speaking: 'Speaking…',
+    error: 'Hold to talk',
+  };
+
+  function setCoreState(state) {
+    window.NovaCoreView?.setState(state);
+    el.stage.classList.toggle('is-recording', state === 'listening');
+    el.stageCaption.textContent = CAPTIONS[state] || CAPTIONS.idle;
+  }
 
   // ------------------------------------------------------------- pairing
 
@@ -168,16 +188,27 @@
     return bubble;
   }
 
+  /** Speaks the reply and drives the Core's "speaking" state in step with
+   * actual playback, not just for the time it took to call speak(). */
   function speak(text) {
-    if (!('speechSynthesis' in window) || !text.trim()) return;
+    if (!('speechSynthesis' in window) || !text.trim()) {
+      setCoreState('idle');
+      return;
+    }
     window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.onstart = () => setCoreState('speaking');
+    utterance.onend = () => setCoreState('idle');
+    utterance.onerror = () => setCoreState('idle');
+    window.speechSynthesis.speak(utterance);
   }
 
   async function handleResult(promise, userBubbleText) {
     const userBubble = addTurn('user', userBubbleText);
     const pending = addTurn('nova pending', 'Thinking…');
     setBusy(true);
+    setCoreState('thinking');
+    el.stageLine.classList.remove('error');
     try {
       const result = await promise;
       // The audio path does not know what was heard until this response
@@ -189,24 +220,36 @@
       if (result.error) {
         pending.classList.add('error');
         pending.textContent = result.error;
+        el.stageLine.textContent = result.error;
+        el.stageLine.classList.add('error');
+        setCoreState('error');
+        setTimeout(() => setCoreState('idle'), 1200);
       } else if (!result.text) {
         pending.remove();
+        el.stageLine.textContent = '';
+        setCoreState('idle');
       } else {
         pending.textContent = result.text;
-        speak(result.text);
+        el.stageLine.textContent = result.text;
+        speak(result.text); // moves the Core into "speaking", then back to idle
       }
     } catch (err) {
       if (userBubbleText === '…') userBubble.remove(); // never learned what, if anything, was heard
       pending.classList.remove('pending');
       pending.classList.add('error');
-      pending.textContent = err.message || 'Something went wrong.';
+      const message = err.message || 'Something went wrong.';
+      pending.textContent = message;
+      el.stageLine.textContent = message;
+      el.stageLine.classList.add('error');
+      setCoreState('error');
+      setTimeout(() => setCoreState('idle'), 1200);
     } finally {
       setBusy(false);
     }
   }
 
   function setBusy(busy) {
-    el.talk.classList.toggle('is-busy', busy);
+    el.stage.classList.toggle('is-busy', busy);
     el.textForm.querySelector('button').disabled = busy;
   }
 
@@ -215,7 +258,7 @@
   el.textForm.addEventListener('submit', (event) => {
     event.preventDefault();
     const text = el.textInput.value.trim();
-    if (!text || el.talk.classList.contains('is-busy')) return;
+    if (!text || el.stage.classList.contains('is-busy')) return;
     el.textInput.value = '';
     handleResult(bridge.request('text.submit', { text, source: 'mobile' }), text);
   });
@@ -231,7 +274,7 @@
     autoStopTimer: null,
 
     async start() {
-      if (this.recording || el.talk.classList.contains('is-busy')) return;
+      if (this.recording || el.stage.classList.contains('is-busy')) return;
       try {
         this.stream = await navigator.mediaDevices.getUserMedia({
           audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
@@ -249,15 +292,16 @@
       this.processor = this.context.createScriptProcessor(4096, 1, 1);
       this.chunks = [];
       this.processor.onaudioprocess = (event) => {
-        this.chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+        const data = event.inputBuffer.getChannelData(0);
+        this.chunks.push(new Float32Array(data));
+        window.NovaCoreView?.setLevel(rmsLevel(data));
       };
       source.connect(this.processor);
       this.processor.connect(silence);
       silence.connect(this.context.destination);
 
       this.recording = true;
-      el.talk.classList.add('is-recording');
-      el.talkLabel.textContent = 'Listening…';
+      setCoreState('listening');
       this.autoStopTimer = setTimeout(() => this.stop(), MAX_RECORD_MS);
     },
 
@@ -265,8 +309,7 @@
       if (!this.recording) return;
       this.recording = false;
       clearTimeout(this.autoStopTimer);
-      el.talk.classList.remove('is-recording');
-      el.talkLabel.textContent = 'Hold to talk';
+      window.NovaCoreView?.setLevel(0);
 
       const sourceRate = this.context.sampleRate; // read before close(); some engines drop it after
       this.processor?.disconnect();
@@ -275,7 +318,10 @@
 
       const audio = flattenChunks(this.chunks);
       this.chunks = [];
-      if (audio.length < sourceRate * 0.3) return; // too short to be real speech
+      if (audio.length < sourceRate * 0.3) {
+        setCoreState('idle');
+        return; // too short to be real speech
+      }
 
       const resampled = resampleTo16k(audio, sourceRate);
       const base64 = pcm16ToBase64(resampled);
@@ -288,6 +334,14 @@
       );
     },
   };
+
+  /** Root-mean-square loudness of one audio block, scaled for a punchier
+   * visual reaction — typical speech RMS is small (0.01–0.3). */
+  function rmsLevel(samples) {
+    let sumSquares = 0;
+    for (let i = 0; i < samples.length; i += 1) sumSquares += samples[i] * samples[i];
+    return Math.sqrt(sumSquares / samples.length) * 4;
+  }
 
   function flattenChunks(chunks) {
     const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
@@ -338,13 +392,13 @@
     return btoa(binary);
   }
 
-  el.talk.addEventListener('pointerdown', (event) => {
+  el.stage.addEventListener('pointerdown', (event) => {
     event.preventDefault();
     recorder.start();
   });
-  el.talk.addEventListener('pointerup', () => recorder.stop());
-  el.talk.addEventListener('pointercancel', () => recorder.stop());
-  el.talk.addEventListener('pointerleave', () => {
+  el.stage.addEventListener('pointerup', () => recorder.stop());
+  el.stage.addEventListener('pointercancel', () => recorder.stop());
+  el.stage.addEventListener('pointerleave', () => {
     if (recorder.recording) recorder.stop();
   });
 

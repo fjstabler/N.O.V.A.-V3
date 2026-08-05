@@ -30,6 +30,14 @@
       <button id="token-save">Connect</button>
     </section>
 
+    <!-- The Core is the control: press and hold it to talk, same as the
+         desktop app is built around it rather than a chrome of buttons. -->
+    <section class="stage" id="stage" aria-label="Hold to talk to N.O.V.A.">
+      <canvas id="core"></canvas>
+      <p class="stage__caption" id="stage-caption">Hold to talk</p>
+      <p class="stage__line" id="stage-line"></p>
+    </section>
+
     <section id="conversation" class="conversation" aria-live="polite"></section>
 
     <footer class="controls">
@@ -37,14 +45,10 @@
         <input id="text-input" type="text" placeholder="Type instead…" autocomplete="off" autocapitalize="sentences" />
         <button type="submit" aria-label="Send">➤</button>
       </form>
-
-      <button id="talk" class="talk" aria-label="Push to talk">
-        <span class="talk__ring"></span>
-        <span class="talk__label">Hold to talk</span>
-      </button>
     </footer>
   </main>
 
+  <script src="/core.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
