@@ -291,7 +291,7 @@ class SecuritySettings(BaseModel):
 
     #: Matches an entry in vision.named_cameras by name.
     camera_name: str = ""
-    poll_interval_seconds: float = Field(default=1.5, ge=0.5, le=10.0)
+    poll_interval_seconds: float = Field(default=0.75, ge=0.5, le=10.0)
     #: Consecutive unrecognised-face detections required before alerting —
     #: one odd frame (motion blur, a bad angle) should not be enough on its own.
     confirm_frames: int = Field(default=2, ge=1, le=10)
