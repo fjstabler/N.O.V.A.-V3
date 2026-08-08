@@ -41,6 +41,8 @@
     cameraViewTitle: document.getElementById('camera-view-title'),
     cameraViewClose: document.getElementById('camera-view-close'),
     cameraViewImage: document.getElementById('camera-view-image'),
+    cameraViewError: document.getElementById('camera-view-error'),
+    cameraViewBack: document.getElementById('camera-view-back'),
   };
 
   // Replies are read aloud through this one <audio> element, playing WAV
@@ -138,11 +140,29 @@
   // is deliberate: this page only ever needs to show the one camera a
   // notification pointed at, not react to arbitrary events mid-session.
   const CAMERA_POLL_MIN_GAP_MS = 250;
+  // A dropped frame or two is normal on a flaky connection; only give up
+  // once frames have failed continuously for a while. The old code retried
+  // silently forever on any failure (wrong/expired token, camera offline,
+  // N.O.V.A. unreachable from outside the home network) — from a link saved
+  // to a phone's home screen, which reopens straight into this view, that
+  // read as the whole app being permanently broken: a black box with no
+  // explanation and nothing telling the person anything had gone wrong.
+  const CAMERA_FAILURE_TIMEOUT_MS = 8000;
   let cameraPollTimer = null;
+  let cameraFailingSince = null;
 
   function titleFromCameraSlug(slug) {
     const name = slug.includes(':') ? slug.slice(slug.indexOf(':') + 1) : slug;
     return name.replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  function showCameraError() {
+    if (cameraPollTimer) clearTimeout(cameraPollTimer);
+    cameraPollTimer = null;
+    el.cameraViewImage.onload = null;
+    el.cameraViewImage.onerror = null;
+    el.cameraViewImage.hidden = true;
+    el.cameraViewError.hidden = false;
   }
 
   function openCameraView(slug) {
@@ -151,22 +171,34 @@
       showPairing('paste the token, then reopen the camera link');
       return;
     }
+    el.cameraViewError.hidden = true;
+    el.cameraViewImage.hidden = false;
     el.cameraView.hidden = false;
     el.cameraViewTitle.textContent = titleFromCameraSlug(slug);
+    cameraFailingSince = null;
     const path = `/camera/${encodeURIComponent(slug)}`;
     const fetchFrame = () => {
       el.cameraViewImage.src = `${path}?token=${encodeURIComponent(token)}&t=${Date.now()}`;
     };
     el.cameraViewImage.onload = () => {
+      cameraFailingSince = null;
       cameraPollTimer = setTimeout(fetchFrame, CAMERA_POLL_MIN_GAP_MS);
     };
-    el.cameraViewImage.onerror = el.cameraViewImage.onload;
+    el.cameraViewImage.onerror = () => {
+      if (cameraFailingSince === null) cameraFailingSince = Date.now();
+      if (Date.now() - cameraFailingSince > CAMERA_FAILURE_TIMEOUT_MS) {
+        showCameraError();
+        return;
+      }
+      cameraPollTimer = setTimeout(fetchFrame, CAMERA_POLL_MIN_GAP_MS);
+    };
     fetchFrame();
   }
 
   function closeCameraView() {
     if (cameraPollTimer) clearTimeout(cameraPollTimer);
     cameraPollTimer = null;
+    cameraFailingSince = null;
     el.cameraViewImage.onload = null;
     el.cameraViewImage.onerror = null;
     el.cameraViewImage.src = '';
@@ -177,6 +209,7 @@
   }
 
   el.cameraViewClose.addEventListener('click', closeCameraView);
+  el.cameraViewBack.addEventListener('click', closeCameraView);
 
   const cameraSlug = new URL(window.location.href).searchParams.get('camera');
   if (cameraSlug) openCameraView(cameraSlug);
