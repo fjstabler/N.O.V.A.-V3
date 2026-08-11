@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CoreMotion, PALETTES, PROFILES, RINGS, Spring, paletteFor } from './visual';
+import { CoreMotion, IDLE_DIMMED, PALETTES, PROFILES, RINGS, Spring, paletteFor } from './visual';
 
 const FRAME = 1 / 60;
 
@@ -115,6 +115,25 @@ describe('profiles', () => {
     for (const [name, profile] of Object.entries(PROFILES)) {
       expect(profile.alert === 0 || name === 'error').toBe(true);
     }
+  });
+});
+
+describe('IDLE_DIMMED', () => {
+  it('is dimmer, smaller and slower-spinning than ordinary idle', () => {
+    expect(IDLE_DIMMED.bloom).toBeLessThan(PROFILES.idle.bloom);
+    expect(IDLE_DIMMED.energy).toBeLessThan(PROFILES.idle.energy);
+    expect(IDLE_DIMMED.scale).toBeLessThan(PROFILES.idle.scale);
+    expect(IDLE_DIMMED.spin).toBeLessThan(PROFILES.idle.spin);
+  });
+
+  it('a spring settles on it exactly like any other profile', () => {
+    // Not a NovaState, so it is never in PROFILES — but CoreMotion has no
+    // idea of that distinction, it only ever sees a CoreProfile shape.
+    const motion = new CoreMotion();
+    motion.snapTo(PROFILES.idle);
+    for (let i = 0; i < 300; i += 1) motion.step(IDLE_DIMMED, 0, 1 / 60);
+    expect(motion.scale.value).toBeCloseTo(IDLE_DIMMED.scale, 2);
+    expect(motion.spin.value).toBeCloseTo(IDLE_DIMMED.spin, 2);
   });
 });
 

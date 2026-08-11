@@ -54,6 +54,25 @@ const IDLE: CoreProfile = {
  * as overrides keeps the family visually coherent — you cannot accidentally
  * design a state that looks like a different application.
  */
+/**
+ * A quiet resting look after a long stretch with nobody talking to it —
+ * dimmer, a little smaller, rotating noticeably slower than ordinary idle.
+ * Not a `NovaState`: the backend has no opinion on this, it is purely a
+ * front-end idea of "nothing has happened in a while", so it lives beside
+ * `PROFILES` rather than in it. The renderer only ever reaches for it while
+ * already idle, and drops it the instant a real state change arrives.
+ */
+export const IDLE_DIMMED: CoreProfile = {
+  ...IDLE,
+  energy: 0.16,
+  turbulence: 0.1,
+  spin: 0.22,
+  coreRadius: 0.1,
+  scale: 0.88,
+  bloom: 0.45,
+  breath: 0.6,
+};
+
 export const PROFILES: Record<NovaState, CoreProfile> = {
   booting: { ...IDLE, energy: 0.12, coreRadius: 0.05, scale: 0.82, bloom: 0.5, breath: 0 },
   idle: IDLE,

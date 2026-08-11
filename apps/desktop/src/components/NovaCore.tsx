@@ -25,9 +25,16 @@ type AnyRenderer = CoreRenderer | FallbackRenderer;
  */
 let activeRenderer: AnyRenderer | null = null;
 
+/** How long with nobody talking to it before the Core settles into its
+ *  quiet resting look. */
+const IDLE_DIM_MS = 15 * 60_000;
+
 /** Flash the Core. Safe to call before the renderer exists. */
 export function pulseCore(strength = 0.8): void {
   activeRenderer?.pulse(strength);
+  // A surface appearing (a map, a camera) is as much "someone just asked for
+  // something" as a spoken turn is — it should wake the Core the same way.
+  useNova.getState().noteInteraction();
 }
 
 export function NovaCore(): JSX.Element {
@@ -38,6 +45,7 @@ export function NovaCore(): JSX.Element {
   const level = useNova((store) => store.level);
   const setFps = useNova((store) => store.setFps);
   const appearance = useNova((store) => store.settings?.appearance);
+  const lastActiveAt = useNova((store) => store.lastActiveAt);
 
   // Construct once. Appearance changes are pushed in imperatively below, so the
   // renderer is never torn down and rebuilt for a theme switch.
@@ -111,6 +119,17 @@ export function NovaCore(): JSX.Element {
   useEffect(() => {
     rendererRef.current?.setLevel(level);
   }, [level]);
+
+  // Wakes immediately on every interaction (the effect re-running means one
+  // just happened) and re-arms a single 15-minute timer rather than polling —
+  // `lastActiveAt` only changes on real activity, so a quiet room needs
+  // exactly one timeout, scheduled once, to eventually settle the Core.
+  useEffect(() => {
+    rendererRef.current?.setIdleDimmed(false);
+    const remaining = Math.max(0, IDLE_DIM_MS - (Date.now() - lastActiveAt));
+    const timer = setTimeout(() => rendererRef.current?.setIdleDimmed(true), remaining);
+    return () => clearTimeout(timer);
+  }, [lastActiveAt]);
 
   useEffect(() => {
     if (!appearance) return;

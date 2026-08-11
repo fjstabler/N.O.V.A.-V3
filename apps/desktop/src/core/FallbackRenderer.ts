@@ -12,7 +12,7 @@
  */
 
 import type { NovaState } from '@protocol';
-import { CoreMotion, PROFILES, RINGS, paletteFor, type Palette } from './visual';
+import { CoreMotion, IDLE_DIMMED, PROFILES, RINGS, paletteFor, type Palette } from './visual';
 import { FpsMeter } from './quality';
 
 export interface FallbackOptions {
@@ -44,6 +44,7 @@ export class FallbackRenderer {
   private palette: Palette;
   private options: FallbackOptions;
   private state: NovaState = 'booting';
+  private idleDimmed = false;
   private level = 0;
   private clock = 0;
   private lastFrame = 0;
@@ -77,7 +78,10 @@ export class FallbackRenderer {
 
   setState(state: NovaState): void {
     if (state === this.state) return;
-    if (state !== 'idle' && state !== 'booting') this.motion.flash(0.6);
+    if (state !== 'idle' && state !== 'booting') {
+      this.motion.flash(0.6);
+      this.idleDimmed = false;
+    }
     this.state = state;
   }
 
@@ -87,6 +91,10 @@ export class FallbackRenderer {
 
   pulse(strength = 0.8): void {
     this.motion.flash(strength);
+  }
+
+  setIdleDimmed(dimmed: boolean): void {
+    this.idleDimmed = dimmed;
   }
 
   updateOptions(options: Partial<FallbackOptions>): void {
@@ -123,7 +131,8 @@ export class FallbackRenderer {
     this.lastFrame = now;
     this.clock += dt * (this.options.reduceMotion ? 0.35 : 1);
 
-    const profile = PROFILES[this.state] ?? PROFILES.idle;
+    const profile =
+      this.state === 'idle' && this.idleDimmed ? IDLE_DIMMED : (PROFILES[this.state] ?? PROFILES.idle);
     this.motion.step(profile, this.level, dt);
     for (let i = 0; i < RINGS.length; i += 1) {
       this.ringAngles[i] =

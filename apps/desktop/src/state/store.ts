@@ -56,6 +56,12 @@ interface NovaStore {
   connection: ConnectionState;
   state: NovaState;
   level: number;
+  /** Timestamp of the last time the assistant was actively doing something
+   *  for the user — reset on every state change away from idle, and by
+   *  anything else that counts as "someone just interacted" (see
+   *  `pulseCore`). Drives the Core's quiet-resting look after a long
+   *  stretch with nobody talking to it. */
+  lastActiveAt: number;
 
   /** What the user is currently saying, or just said. */
   transcript: string;
@@ -84,6 +90,7 @@ interface NovaStore {
   setConnection: (connection: ConnectionState) => void;
   setState: (state: NovaState) => void;
   setLevel: (level: number) => void;
+  noteInteraction: () => void;
   setTranscript: (text: string) => void;
   appendReply: (text: string) => void;
   setReply: (text: string) => void;
@@ -114,6 +121,7 @@ export const useNova = create<NovaStore>((set) => ({
   connection: 'connecting',
   state: 'booting',
   level: 0,
+  lastActiveAt: Date.now(),
   transcript: '',
   reply: '',
   activeTool: null,
@@ -130,6 +138,7 @@ export const useNova = create<NovaStore>((set) => ({
   fps: 0,
 
   setConnection: (connection) => set({ connection }),
+  noteInteraction: () => set({ lastActiveAt: Date.now() }),
   setState: (state) => set({ state }),
   setLevel: (level) => set({ level }),
   setTranscript: (transcript) => set({ transcript }),
@@ -190,12 +199,17 @@ export function wireBridge(client: BridgeClient): () => void {
   unsubscribes.push(
     client.on(Topics.StateChanged, (payload) => {
       const next = payload.state as NovaState;
-      useNova.getState().setState(next);
+      const current = useNova.getState();
+      current.setState(next);
+      // Anything other than settling into idle is the assistant actively
+      // doing something for the user — the signal the Core's idle-dimmed
+      // look watches for to know it should wake back up.
+      if (next !== 'idle') current.noteInteraction();
       // Returning to idle ends the turn; the interface goes quiet again.
       if (next === 'idle') {
         setTimeout(() => {
-          const current = useNova.getState();
-          if (current.state === 'idle') current.clearConversation();
+          const latest = useNova.getState();
+          if (latest.state === 'idle') latest.clearConversation();
         }, 4000);
       }
     }),

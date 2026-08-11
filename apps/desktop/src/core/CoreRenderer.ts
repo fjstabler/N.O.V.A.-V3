@@ -37,7 +37,7 @@ import {
   SCENE_FRAGMENT,
 } from './shaders';
 import { FpsMeter, FrameWatchdog, lowerTier, tierFor, type QualityName, type QualityTier } from './quality';
-import { CoreMotion, PALETTES, PROFILES, RINGS, paletteFor, type Palette } from './visual';
+import { CoreMotion, IDLE_DIMMED, PALETTES, PROFILES, RINGS, paletteFor, type Palette } from './visual';
 
 export interface CoreRendererOptions {
   quality: QualityName;
@@ -82,6 +82,7 @@ export class CoreRenderer {
   private options: CoreRendererOptions;
 
   private state: NovaState = 'booting';
+  private idleDimmed = false;
   private level = 0;
   private clock = 0;
   private lastFrame = 0;
@@ -208,6 +209,9 @@ export class CoreRenderer {
     // A visible transition deserves a flash; idle settling does not.
     if (state !== 'idle' && state !== 'booting') {
       this.motion.flash(state === 'error' ? 1.2 : 0.55);
+      // Any real activity ends the quiet-resting look immediately — "comes
+      // alive again" should read as instant, not another slow spring.
+      this.idleDimmed = false;
     }
     this.state = state;
   }
@@ -219,6 +223,13 @@ export class CoreRenderer {
   /** Fire a one-off flash — a notification, a wake word, a tool completing. */
   pulse(strength = 0.8): void {
     this.motion.flash(strength);
+  }
+
+  /** Settle into (or leave) the quiet resting look after long inactivity.
+   *  Only has any effect while `state` is `idle` — see the profile choice
+   *  in `frame()`. */
+  setIdleDimmed(dimmed: boolean): void {
+    this.idleDimmed = dimmed;
   }
 
   updateOptions(options: Partial<CoreRendererOptions>): void {
@@ -322,7 +333,8 @@ export class CoreRenderer {
     // motion that never stops, and a still Core would read as a crash.
     this.clock += dt * (this.options.reduceMotion ? 0.35 : 1);
 
-    const profile = PROFILES[this.state] ?? PROFILES.idle;
+    const profile =
+      this.state === 'idle' && this.idleDimmed ? IDLE_DIMMED : (PROFILES[this.state] ?? PROFILES.idle);
     this.motion.step(profile, this.level, dt);
     this.advanceRings(dt);
     this.render();
