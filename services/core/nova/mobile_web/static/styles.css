@@ -215,6 +215,15 @@ html, body {
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);
 }
+/* `.camera-view` and the browser's own `[hidden] { display: none }` rule
+   have equal specificity, and author styles win ties over the user-agent
+   stylesheet — so setting the `hidden` attribute alone silently did not
+   hide this element; `display: flex` above kept winning. Closing the view
+   (the X, the "Back to N.O.V.A." button, or a failed-load timeout) updated
+   the DOM correctly but never had any visible effect. */
+.camera-view[hidden] {
+  display: none;
+}
 .camera-view__bar {
   display: flex;
   align-items: center;
