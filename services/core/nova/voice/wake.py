@@ -23,8 +23,10 @@ from ..runtime.logging import get_logger
 
 log = get_logger(__name__)
 
-#: Consecutive frames above threshold required to accept a detection.
-CONSECUTIVE_FRAMES = 2
+#: Fallback when a detector is constructed without an explicit value (tests,
+#: mainly) — config.schema.WakeWordSettings.consecutive_frames is what every
+#: real detector actually gets built with.
+DEFAULT_CONSECUTIVE_FRAMES = 3
 
 
 class WakeWordDetector:
@@ -36,11 +38,13 @@ class WakeWordDetector:
         *,
         sensitivity: float = 0.55,
         cooldown: float = 1.5,
+        consecutive_frames: int = DEFAULT_CONSECUTIVE_FRAMES,
         models_dir: Path | None = None,
     ) -> None:
         self.model_name = model
         self.sensitivity = sensitivity
         self.cooldown = cooldown
+        self.consecutive_frames = consecutive_frames
         self.models_dir = models_dir
         self._model: Any = None
         self._last_detection = 0.0
@@ -131,7 +135,7 @@ class WakeWordDetector:
             return False
 
         self._streak += 1
-        if self._streak < CONSECUTIVE_FRAMES:
+        if self._streak < self.consecutive_frames:
             return False
 
         now = time.monotonic()
@@ -163,11 +167,19 @@ class WakeWordDetector:
         self._streak = 0
         self._peak = 0.0
 
-    def update(self, *, sensitivity: float | None = None, cooldown: float | None = None) -> None:
+    def update(
+        self,
+        *,
+        sensitivity: float | None = None,
+        cooldown: float | None = None,
+        consecutive_frames: int | None = None,
+    ) -> None:
         if sensitivity is not None:
             self.sensitivity = sensitivity
         if cooldown is not None:
             self.cooldown = cooldown
+        if consecutive_frames is not None:
+            self.consecutive_frames = consecutive_frames
 
 
 def _bundled_models() -> list[str]:

@@ -57,6 +57,7 @@ class VoiceService(Service):
             settings.wake.model,
             sensitivity=settings.wake.sensitivity,
             cooldown=settings.wake.cooldown_seconds,
+            consecutive_frames=settings.wake.consecutive_frames,
             models_dir=ctx.paths.models_dir,
         )
         self.transcriber = Transcriber(
@@ -162,10 +163,15 @@ class VoiceService(Service):
                     "the next time N.O.V.A. starts.",
                 )
 
-        if "voice.wake.sensitivity" in changed or "voice.wake.cooldown_seconds" in changed:
+        if (
+            "voice.wake.sensitivity" in changed
+            or "voice.wake.cooldown_seconds" in changed
+            or "voice.wake.consecutive_frames" in changed
+        ):
             self.wake.update(
                 sensitivity=settings.voice.wake.sensitivity,
                 cooldown=settings.voice.wake.cooldown_seconds,
+                consecutive_frames=settings.voice.wake.consecutive_frames,
             )
         if "voice.tts.voice" in changed or "voice.tts.speed" in changed:
             self.synthesiser.update(voice=settings.voice.tts.voice, speed=settings.voice.tts.speed)
@@ -188,6 +194,7 @@ class VoiceService(Service):
             settings.model,
             sensitivity=settings.sensitivity,
             cooldown=settings.cooldown_seconds,
+            consecutive_frames=settings.consecutive_frames,
             models_dir=self.ctx.paths.models_dir,
         )
         try:

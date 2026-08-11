@@ -71,3 +71,32 @@ async def test_a_wake_trigger_while_genuinely_idle_still_starts_a_capture(
 
     assert voice._state is ListenState.CAPTURING
     assert ctx.state.state is NovaState.LISTENING
+
+
+# ------------------------------------------------------ wake settings wiring
+
+
+async def test_the_real_detector_is_built_with_the_configured_consecutive_frames(
+    ctx: NovaContext,
+) -> None:
+    ctx.store.patch({"voice": {"wake": {"consecutive_frames": 5}}}, persist=False)
+    voice = VoiceService(ctx)
+    assert voice.wake.consecutive_frames == 5
+
+
+async def test_changing_consecutive_frames_updates_the_live_detector(
+    ctx: NovaContext,
+) -> None:
+    """Regression: this setting was added alongside sensitivity and cooldown,
+    which already apply live via `_on_settings_changed` — without wiring it
+    through the same way, changing it in Settings would silently do nothing
+    until a full restart, exactly the "the panel appears to accept the
+    change" trap `_on_settings_changed`'s own comment already warns about
+    for the wake model itself."""
+    voice = VoiceService(ctx)
+    assert voice.wake.consecutive_frames != 6
+
+    settings = ctx.store.patch({"voice": {"wake": {"consecutive_frames": 6}}}, persist=False)
+    voice._on_settings_changed(settings, {"voice.wake.consecutive_frames": 6})
+
+    assert voice.wake.consecutive_frames == 6

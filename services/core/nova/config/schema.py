@@ -49,6 +49,16 @@ class WakeWordSettings(BaseModel):
     cooldown_seconds: float = Field(default=1.5, ge=0.0, le=10.0)
     #: Suppresses self-triggering while N.O.V.A. is speaking.
     mute_while_speaking: bool = True
+    consecutive_frames: int = Field(
+        default=3,
+        ge=1,
+        le=8,
+        description="Frames in a row the score must stay above threshold before it counts as a "
+        "hit (~80ms each). Sensitivity alone only filters borderline scores — a television or "
+        "other ambient audio that briefly scores very high needs a longer required streak instead, "
+        "since no sensitivity setting will reject a confident-looking match. Raise this before "
+        "lowering sensitivity further if false wakes keep happening during TV or music.",
+    )
 
 
 class SpeechToTextSettings(BaseModel):

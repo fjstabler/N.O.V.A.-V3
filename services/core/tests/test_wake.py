@@ -25,7 +25,10 @@ class FakeModel:
 
 
 def make_detector(sensitivity: float, score: float) -> WakeWordDetector:
-    detector = WakeWordDetector("hey_nova.onnx", sensitivity=sensitivity)
+    # consecutive_frames pinned here, not left at the production default —
+    # this file is about what sensitivity does, and fire_twice() below
+    # should not silently need updating whenever that default changes.
+    detector = WakeWordDetector("hey_nova.onnx", sensitivity=sensitivity, consecutive_frames=2)
     detector._model = FakeModel(score)  # type: ignore[assignment]
     return detector
 
@@ -63,3 +66,57 @@ def test_the_shipped_default_sits_slightly_lenient_of_the_midpoint() -> None:
     score and reject a just-below-half one."""
     assert fire_twice(make_detector(sensitivity=0.55, score=0.46)) is True
     assert fire_twice(make_detector(sensitivity=0.55, score=0.44)) is False
+
+
+# ---------------------------------------------------------- consecutive frames
+
+
+def test_consecutive_frames_rejects_a_brief_high_confidence_spike() -> None:
+    """Regression: a real false-wake report showed the model scoring 0.98+
+    confidence — high enough that no sensitivity setting would ever reject
+    it — but only briefly, consistent with a word or two of TV/ambient audio
+    that happens to resemble the phrase rather than someone actually saying
+    it. Sensitivity only filters borderline scores; a longer required streak
+    is the lever that actually catches this, which is the point of the
+    setting existing at all."""
+    detector = WakeWordDetector(
+        "hey_nova.onnx", sensitivity=0.55, consecutive_frames=4, models_dir=None
+    )
+    detector._model = FakeModel(0.99)  # type: ignore[assignment]
+    frame = b"\x00\x00" * 80
+
+    # Three consecutive high-confidence frames — not enough at consecutive_frames=4.
+    assert detector.detected(frame) is False
+    assert detector.detected(frame) is False
+    assert detector.detected(frame) is False
+    assert detector.detected(frame) is True
+
+
+def test_a_score_dip_mid_streak_resets_the_count() -> None:
+    detector = WakeWordDetector(
+        "hey_nova.onnx", sensitivity=0.55, consecutive_frames=3, models_dir=None
+    )
+    frame = b"\x00\x00" * 80
+
+    detector._model = FakeModel(0.9)  # type: ignore[assignment]
+    assert detector.detected(frame) is False
+    assert detector.detected(frame) is False
+
+    detector._model = FakeModel(0.1)  # type: ignore[assignment]  # dips below threshold
+    assert detector.detected(frame) is False
+
+    detector._model = FakeModel(0.9)  # type: ignore[assignment]
+    assert detector.detected(frame) is False  # streak restarted, not resumed
+    assert detector.detected(frame) is False
+    assert detector.detected(frame) is True
+
+
+def test_the_shipped_default_is_three_consecutive_frames() -> None:
+    """Regression: real logs showed repeated wake_detected events during a
+    long TV-watching session, several with 0.98+ confidence — the old
+    default of 2 consecutive frames (~160ms) was not enough debounce
+    against ambient audio, even though sensitivity had already been
+    lowered. 3 is the new floor; still comfortably short of how long an
+    actually-spoken "Hey Nova" holds a high score for."""
+    detector = WakeWordDetector("hey_nova.onnx", sensitivity=0.55, models_dir=None)
+    assert detector.consecutive_frames == 3
