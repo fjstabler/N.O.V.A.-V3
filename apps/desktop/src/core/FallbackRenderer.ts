@@ -129,11 +129,18 @@ export class FallbackRenderer {
 
     const dt = Math.min((now - this.lastFrame) / 1000, 1 / 15);
     this.lastFrame = now;
-    this.clock += dt * (this.options.reduceMotion ? 0.35 : 1);
 
     const profile =
       this.state === 'idle' && this.idleDimmed ? IDLE_DIMMED : (PROFILES[this.state] ?? PROFILES.idle);
     this.motion.step(profile, this.level, dt);
+
+    // See CoreRenderer's frame() for why this is scaled the same way: the
+    // clock drives more than just ring rotation (tilt oscillation, dash
+    // travel), and all of it should settle at the same pace as the rings do.
+    const idleClockFactor =
+      this.state === 'idle' ? this.motion.spin.value / PROFILES.idle.spin : 1;
+    this.clock += dt * (this.options.reduceMotion ? 0.35 : 1) * idleClockFactor;
+
     for (let i = 0; i < RINGS.length; i += 1) {
       this.ringAngles[i] =
         (this.ringAngles[i]! + RINGS[i]!.speed * this.motion.spin.value * dt) % (Math.PI * 2);

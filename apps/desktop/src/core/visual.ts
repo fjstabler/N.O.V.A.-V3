@@ -64,12 +64,12 @@ const IDLE: CoreProfile = {
  */
 export const IDLE_DIMMED: CoreProfile = {
   ...IDLE,
-  energy: 0.09,
+  energy: 0.24,
   turbulence: 0.06,
   spin: 0.12,
   coreRadius: 0.1,
   scale: 0.88,
-  bloom: 0.22,
+  bloom: 0.6,
   breath: 0.6,
 };
 
