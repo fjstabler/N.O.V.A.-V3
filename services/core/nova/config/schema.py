@@ -255,6 +255,29 @@ class ServerSettings(BaseModel):
     alert_gpu_temp_c: float = Field(default=83.0, ge=50.0, le=110.0)
 
 
+class DesktopSettings(BaseModel):
+    """Control of the desktop N.O.V.A. runs on: opening pages, files and apps.
+
+    These actions are reversible — a page, a file or an app can be closed again
+    in a second — so they run without the confirmation gate. The genuinely risky
+    actions (deleting files, shell commands, system settings) stay behind it in
+    the ``server`` skill regardless of anything set here.
+    """
+
+    enabled: bool = True
+    #: Allow launching applications by name. Opening URLs and files is separate,
+    #: so this can be off while page/file opening stays on.
+    allow_launch: bool = True
+    #: If non-empty, only these application names may be launched; empty allows
+    #: any installed app. Names are matched case-insensitively.
+    app_allowlist: list[str] = Field(default_factory=list)
+    #: Where a web search goes. ``{query}`` is replaced with the URL-encoded terms.
+    search_url: str = Field(
+        default="https://duckduckgo.com/?q={query}",
+        description="Search URL template; {query} is replaced with the search terms",
+    )
+
+
 class HomeLabService(BaseModel):
     """One self-hosted service N.O.V.A. should understand."""
 
@@ -422,6 +445,7 @@ class NovaSettings(BaseModel):
     mqtt: MQTTSettings = Field(default_factory=MQTTSettings)
     calendar: CalendarSettings = Field(default_factory=CalendarSettings)
     server: ServerSettings = Field(default_factory=ServerSettings)
+    desktop: DesktopSettings = Field(default_factory=DesktopSettings)
     homelab: HomeLabSettings = Field(default_factory=HomeLabSettings)
     vision: VisionSettings = Field(default_factory=VisionSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)

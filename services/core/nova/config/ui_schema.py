@@ -30,6 +30,7 @@ SECTIONS: list[tuple[str, str, str]] = [
     ("mqtt", "MQTT", "Message broker for devices and automations"),
     ("calendar", "Calendar", "CalDAV accounts and reminders"),
     ("server", "Server", "Ubuntu monitoring and administration"),
+    ("desktop", "Desktop", "Open pages, files and apps on this machine"),
     ("homelab", "Home Lab", "Self-hosted services"),
     ("vision", "Vision", "Screen and camera understanding"),
     ("security", "Security", "Room-watch: face recognition alerts"),

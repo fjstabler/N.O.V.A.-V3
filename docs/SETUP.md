@@ -184,6 +184,36 @@ sudo usermod -aG docker $USER   # log out and back in
 `server.allow_shell` enables shell pipelines and redirection. It is off by
 default, and even when on, every command still goes through the classifier.
 
+### Desktop control
+
+Where the server tools administer a machine, the **Desktop** skill acts on the
+one N.O.V.A. is sitting at — the computer with the screen in front of you. It can
+open web pages ("pull up the news"), open files and folders in their default app
+("open that invoice"), launch applications by name ("open the terminal"), and
+read or set the clipboard.
+
+These actions are reversible — a page or app can be closed again in a second — so
+they run **without** the confirmation gate. The genuinely risky actions (deleting
+or overwriting files, shell commands, system settings) stay behind it in the
+server tools regardless. Opening a file goes through the same `server.file_roots`
+sandbox, so N.O.V.A. can only open paths you have allowed.
+
+Settings live under **Desktop**:
+
+- **Enabled** turns the whole skill on or off.
+- **Allow launch** governs launching applications specifically; page and file
+  opening are separate, so you can leave app-launching off while keeping the rest.
+- **App allowlist** — if you list any application names here, only those may be
+  launched; leave it empty to allow any installed app.
+- **Search URL** is the template a web search opens; `{query}` is replaced with
+  your terms (DuckDuckGo by default).
+
+Opening things uses the standard desktop tools — `xdg-open` on Linux, with a
+`webbrowser` fallback for URLs. The clipboard needs one of `wl-clipboard`
+(Wayland) or `xclip`/`xsel` (X11); without one, N.O.V.A. says so rather than
+failing silently. On macOS and Windows the built-in openers and clipboard are
+used, so nothing extra is needed.
+
 ### Home lab
 
 Add each service under **Home Lab → Services** with its kind, URL and API key.
