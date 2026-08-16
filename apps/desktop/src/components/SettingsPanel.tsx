@@ -57,9 +57,14 @@ export function buildDeviceOptions(entities: HomeEntity[]): DeviceOption[] {
     .map((area) => ({ value: area, label: `${area} (whole room)` }))
     .sort((a, b) => a.label.localeCompare(b.label));
 
+  // Prefer the controllable domains; but if Home Assistant only exposed things
+  // outside that list, still offer them rather than showing an empty dropdown.
+  const named = entities.filter((entity) => entity.name);
+  const controllable = named.filter((entity) => CONTROLLABLE_DOMAINS.has(entity.domain));
+  const source = controllable.length > 0 ? controllable : named;
+
   const seen = new Set<string>();
-  const devices = entities
-    .filter((entity) => CONTROLLABLE_DOMAINS.has(entity.domain) && entity.name)
+  const devices = source
     .filter((entity) => (seen.has(entity.name) ? false : (seen.add(entity.name), true)))
     .map((entity) => ({
       value: entity.name,
@@ -242,21 +247,15 @@ function Field({ field, path, value, onChange }: FieldProps): JSX.Element | null
     case 'select': {
       const fromHome = field.optionsSource === 'home_devices';
       const options = fromHome ? homeDevices : (field.options ?? []);
-      // A device dropdown with nothing live to show (Home Assistant not
-      // connected) falls back to a text box, so the routine can still be typed.
-      if (fromHome && options.length === 0) {
-        return row(
-          <input
-            id={id}
-            type="text"
-            className="settings__input"
-            placeholder="device or room name"
-            value={String(value ?? '')}
-            onChange={(event) => set(event.target.value)}
-            spellCheck={false}
-          />,
-        );
-      }
+      // Always a real dropdown. When it's a device field with nothing to list,
+      // the empty state says why — Home Assistant isn't connected — instead of
+      // silently becoming a text box that looks like the feature is missing.
+      const placeholder =
+        fromHome && options.length === 0
+          ? 'No Home Assistant devices — connect it in the Home Assistant tab'
+          : fromHome
+            ? 'Choose a device or room…'
+            : null;
       return row(
         <select
           id={id}
@@ -264,7 +263,7 @@ function Field({ field, path, value, onChange }: FieldProps): JSX.Element | null
           value={String(value ?? field.default ?? '')}
           onChange={(event) => set(event.target.value)}
         >
-          {fromHome && <option value="">Choose a device or room…</option>}
+          {placeholder !== null && <option value="">{placeholder}</option>}
           {options.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
