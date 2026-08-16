@@ -355,6 +355,46 @@ runs the same OpenCV models `look_at_camera` already depends on
 (`opencv-python-headless`), so nothing new needs installing beyond the two
 model files above.
 
+### Reaching you: presence-aware notifications
+
+N.O.V.A. can send you a notification and route it to wherever you actually
+are. When it has something to tell you proactively — a reminder, a task that
+finished, something worth flagging — it decides between speaking it out loud
+and pushing it to your phone based on whether you're in the room:
+
+- **In the room** → it says it aloud (and still leaves a panel on screen).
+- **Away** → it pushes to your phone over ntfy, and leaves the panel waiting
+  for when you get back.
+
+It works out presence from two signals, so it's useful with or without a
+camera:
+
+1. **Recent interaction** — if you've spoken to it in the last few minutes
+   (**Presence → Interaction window**), you're obviously here. This needs no
+   camera at all.
+2. **A camera glance** — only when the interaction signal is cold, it takes a
+   *single* frame and checks for your enrolled face (the same faces room-watch
+   uses). Turn this off with **Presence → Use camera** to rely on interaction
+   alone and never light the camera for a presence check; it also naturally
+   piggybacks on room-watch while that's armed, with no extra capture.
+
+Setup is minimal:
+
+- Presence reuses room-watch's enrolled face and camera, so if you've done the
+  room-watch steps above, camera presence already works. Otherwise it falls
+  back to the interaction signal.
+- **Point Presence → Camera** at a named camera if you want a different one
+  than room-watch uses; leave it blank to share room-watch's.
+- **Phone push** uses its own topic under **Notifications → Push topic**,
+  generated and saved the first time N.O.V.A. needs to reach you while you're
+  away. Read it there, subscribe to it in the [ntfy app](https://ntfy.sh/),
+  and treat it like a password — same as the room-watch topic. Turn push off
+  entirely with **Notifications → Push enabled**.
+
+Like everything else, each channel degrades on its own: no voice service, no
+push topic or notifications disabled each fail independently, and a notification
+is always left on screen so nothing is lost to a wrong guess about where you are.
+
 ## Environment overrides
 
 Any setting can be overridden with an environment variable, which is useful for

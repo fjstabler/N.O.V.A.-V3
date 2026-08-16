@@ -24,6 +24,7 @@ from .context import NovaContext
 from .integrations.services import CalendarService, HomeLabService, HomeService
 from .memory.service import MemoryService
 from .notifications import NotificationService
+from .presence import PresenceService
 from .runtime import NovaState, Topics, configure_logging, get_logger
 from .runtime.errors import NovaError
 from .security.service import SecurityService
@@ -87,6 +88,7 @@ class NovaApplication:
         register(HomeLabService(self.ctx))
         register(CalendarService(self.ctx))
         register(SecurityService(self.ctx))
+        register(PresenceService(self.ctx))
         register(SkillRegistry(self.ctx))
         register(Orchestrator(self.ctx))
         register(NotificationService(self.ctx))

@@ -79,6 +79,30 @@ class AssistantSkill(Skill):
             self.ctx.bus.publish(Topics.NOTIFICATION, notification.as_payload(), source="assistant")
         return "Shown."
 
+    @tool(
+        "Send the user a notification, routed to actually reach them: spoken aloud "
+        "if they're in the room, or pushed to their phone if they're away. Use this "
+        "for anything you want to tell them proactively — a reminder, a task finishing, "
+        "something worth flagging — not for answering the current turn.",
+        mutating=True,
+    )
+    async def reach_me(
+        self,
+        message: Annotated[str, Param("What to tell the user")],
+        title: Annotated[str, Param("Short heading")] = "N.O.V.A.",
+    ) -> str:
+        presence = self.ctx.service("presence")
+        if presence is not None:
+            return await presence.reach_user(title, message)
+        # No presence service: fall back to a plain on-screen panel.
+        service = self.ctx.service("notifications", NotificationService)
+        notification = Notification(title=title, body=message, source="assistant")
+        if service is not None:
+            await service.raise_notification(notification)
+        else:
+            self.ctx.bus.publish(Topics.NOTIFICATION, notification.as_payload(), source="assistant")
+        return "Shown on screen."
+
     @tool("Turn do-not-disturb on or off.", mutating=True)
     async def set_do_not_disturb(
         self, enabled: Annotated[bool, Param("True to silence notifications")]

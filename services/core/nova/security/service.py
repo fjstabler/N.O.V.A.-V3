@@ -46,6 +46,9 @@ class SecurityService(Service):
         # regardless of what the clock's absolute value happens to be.
         self._last_alert_at = float("-inf")
         self._consecutive_unknown = 0
+        #: Monotonic time an *enrolled* face was last seen while watching, read by
+        #: PresenceService so an armed watch doubles as a free presence signal.
+        self.last_known_face_at: float | None = None
 
     async def on_stop(self) -> None:
         await self.disarm()
@@ -141,10 +144,16 @@ class SecurityService(Service):
             return
 
         settings = self.ctx.settings.security
-        unknown_present = any(
-            self.faces.match(obs.embedding, threshold=settings.match_threshold) is None
+        # Match every face once, then read both signals off the result: an
+        # enrolled face refreshes the presence timestamp, an unenrolled one arms
+        # the alert path below.
+        matches = [
+            self.faces.match(obs.embedding, threshold=settings.match_threshold)
             for obs in observations
-        )
+        ]
+        if any(match is not None for match in matches):
+            self.last_known_face_at = time.monotonic()
+        unknown_present = any(match is None for match in matches)
         if not unknown_present:
             self._consecutive_unknown = 0
             return

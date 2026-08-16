@@ -34,6 +34,7 @@ SECTIONS: list[tuple[str, str, str]] = [
     ("homelab", "Home Lab", "Self-hosted services"),
     ("vision", "Vision", "Screen and camera understanding"),
     ("security", "Security", "Room-watch: face recognition alerts"),
+    ("presence", "Presence", "Reach me by voice when I'm here, phone when I'm away"),
     ("plugins", "Plugins", "Skill modules"),
     ("developer", "Developer", "Diagnostics and debugging"),
     ("transport", "Connection", "Local bridge between UI and core"),

@@ -176,6 +176,12 @@ class NotificationSettings(BaseModel):
     do_not_disturb: bool = False
     quiet_hours_start: str = Field(default="", description="HH:MM, empty to disable")
     quiet_hours_end: str = Field(default="")
+    #: Phone push (ntfy) used to reach you when presence detection says you are
+    #: not in the room. Off by default; a private topic is generated on first use.
+    push_enabled: bool = True
+    push_server: str = Field(default="https://ntfy.sh")
+    #: Generated on first use if left blank — see PresenceService._ensure_push_topic.
+    push_topic: str = Field(default="", description="ntfy topic for phone notifications")
 
 
 class HomeAssistantSettings(BaseModel):
@@ -375,6 +381,30 @@ class SecuritySettings(BaseModel):
     ntfy_topic: str = ""
 
 
+class PresenceSettings(BaseModel):
+    """Whether N.O.V.A. thinks you are in the room, used to route notifications.
+
+    Presence combines two signals: a recent interaction (you spoke to it), and,
+    when that is cold, a momentary camera glance for an enrolled face — the same
+    faces room-watch uses. With ``use_camera`` off, or no camera or enrolled face
+    available, it falls back to interaction alone, so it always has an answer.
+    """
+
+    enabled: bool = True
+    #: Camera checked for your face (matches vision.named_cameras by name); empty
+    #: falls back to the room-watch camera (security.camera_name).
+    camera_name: str = ""
+    #: Take a single camera frame to check presence. Off = interaction signal only,
+    #: and the camera indicator light never comes on for a presence check.
+    use_camera: bool = True
+    #: Treat a recent interaction as "present" for this many seconds.
+    interaction_window_seconds: float = Field(default=180.0, ge=10.0, le=3600.0)
+    #: How long a presence reading stays fresh before it is re-checked.
+    cache_seconds: float = Field(default=15.0, ge=0.0, le=600.0)
+    #: SFace cosine-similarity threshold for recognising your enrolled face.
+    match_threshold: float = Field(default=0.363, ge=0.0, le=1.0)
+
+
 class PluginSettings(BaseModel):
     #: Skills disabled by name. Everything discovered is enabled by default.
     disabled: list[str] = Field(default_factory=list)
@@ -449,6 +479,7 @@ class NovaSettings(BaseModel):
     homelab: HomeLabSettings = Field(default_factory=HomeLabSettings)
     vision: VisionSettings = Field(default_factory=VisionSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
+    presence: PresenceSettings = Field(default_factory=PresenceSettings)
     plugins: PluginSettings = Field(default_factory=PluginSettings)
     developer: DeveloperSettings = Field(default_factory=DeveloperSettings)
     transport: TransportSettings = Field(default_factory=TransportSettings)
