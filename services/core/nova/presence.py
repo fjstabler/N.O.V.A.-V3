@@ -26,6 +26,7 @@ import asyncio
 import secrets
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from .context import NovaContext
 from .integrations.local_camera import local_camera_pool
@@ -63,6 +64,9 @@ class PresenceService(Service):
         # Any of these means a human is interacting with N.O.V.A. right now.
         for topic in (Topics.TURN_STARTED, Topics.TRANSCRIPT_FINAL, Topics.WAKE_DETECTED):
             self.bus.subscribe(topic, self._note_interaction)
+        # Reminders already speak and show a panel when you're here; presence adds
+        # the missing half — pushing them to your phone when you're not.
+        self.bus.subscribe(Topics.CALENDAR_REMINDER, self._on_reminder)
 
     def describe(self) -> str:
         seen = time.monotonic() - self._last_interaction
@@ -73,6 +77,25 @@ class PresenceService(Service):
     def _note_interaction(self, _event: object) -> None:
         self._last_interaction = time.monotonic()
         self._cache = None  # a fresh signal beats any cached reading
+
+    async def _on_reminder(self, event: Any) -> None:
+        """Push a calendar reminder to the phone when the user is not present.
+
+        The calendar service already raises a spoken, on-screen reminder — that
+        covers being at the machine. This adds the away case so a reminder is not
+        missed just because you stepped out.
+        """
+        presence = await self.is_present()
+        if presence.present:
+            return
+        payload = event.payload if hasattr(event, "payload") else {}
+        details = payload.get("event", {})
+        title = details.get("summary") or "Reminder"
+        minutes = int(payload.get("minutesUntil", 0))
+        body = f"starts in {minutes} minute{'s' if minutes != 1 else ''}"
+        if location := details.get("location"):
+            body += f" · {location}"
+        await self._push(title, body, "")
 
     # ------------------------------------------------------------- detection
 

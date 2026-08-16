@@ -253,6 +253,53 @@ async def test_push_is_skipped_when_disabled(
     assert "off" in result.lower()
 
 
+async def test_a_reminder_is_pushed_to_the_phone_when_away(
+    ctx: NovaContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx.store.patch({"presence": {"use_camera": False}}, persist=False)
+    presence = make_presence(ctx)
+    await presence.on_start()  # subscribe to CALENDAR_REMINDER
+
+    sent: list[dict[str, Any]] = []
+
+    async def fake_send(server: str, topic: str, **kwargs: Any) -> bool:
+        sent.append(kwargs)
+        return True
+
+    monkeypatch.setattr("nova.presence.send_ntfy", fake_send)
+
+    await ctx.bus.publish_and_wait(
+        Topics.CALENDAR_REMINDER,
+        {"event": {"summary": "Dentist", "location": "High St"}, "minutesUntil": 15},
+        source="calendar",
+    )
+
+    assert len(sent) == 1
+    assert sent[0]["title"] == "Dentist"
+    assert "15 minutes" in sent[0]["message"]
+    assert "High St" in sent[0]["message"]
+
+
+async def test_a_reminder_is_not_pushed_when_present(
+    ctx: NovaContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At the machine, the calendar's own spoken panel already tells you."""
+    presence = make_presence(ctx)
+    await presence.on_start()
+    presence._note_interaction(None)  # present
+
+    async def fake_send(*args: Any, **kwargs: Any) -> bool:
+        raise AssertionError("must not push a reminder while the user is present")
+
+    monkeypatch.setattr("nova.presence.send_ntfy", fake_send)
+
+    await ctx.bus.publish_and_wait(
+        Topics.CALENDAR_REMINDER,
+        {"event": {"summary": "Standup"}, "minutesUntil": 1},
+        source="calendar",
+    )
+
+
 def test_ensure_push_topic_generates_and_persists_a_private_topic(ctx: NovaContext) -> None:
     presence = make_presence(ctx)
     assert ctx.settings.notifications.push_topic == ""
