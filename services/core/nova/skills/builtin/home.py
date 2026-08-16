@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from typing import Annotated, Literal
 
-from ...integrations.homeassistant import HAEntity
+from pydantic import ValidationError
+
+from ...config.schema import Routine, RoutineStep
+from ...integrations.homeassistant import HAEntity, HomeAssistantClient
 from ...integrations.services import HomeService
 from ...memory.models import Entity as MemoryEntity
 from ...runtime.errors import IntegrationError
@@ -52,6 +56,12 @@ class HomeSkill(Skill):
         lines = [f"Home Assistant is connected with {home.ha.entity_count} entities."]
         if areas:
             lines.append(f"Areas in the home: {', '.join(areas[:15])}.")
+        routines = self.ctx.settings.routines.items
+        if routines:
+            names = ", ".join(f"'{r.name}'" for r in routines[:12])
+            lines.append(
+                f"Saved routines — run one with run_routine when the user says its name: {names}."
+            )
         return lines
 
     # -------------------------------------------------------------- resolution
@@ -362,6 +372,150 @@ class HomeSkill(Skill):
         await client.call_service(domain, service, entity_id)
         return f"called {domain}.{service}"
 
+    # --------------------------------------------------------------- routines
+
+    @tool(
+        "Create or replace a routine — a phrase that runs several home actions at once, like an "
+        'Alexa routine. `steps` is a JSON array of {"action","target","value"} objects. "action" '
+        "is one of: on, off (a single device OR a whole room), brightness (value = percent), "
+        'colour (value = a colour name), temperature (value = degrees), scene, script. "target" '
+        'is the device, room or scene name. Example — a "movie time" routine: '
+        '[{"action":"off","target":"living room"},{"action":"on","target":"tv"},'
+        '{"action":"brightness","target":"hallway","value":"20"}]. Save it under the exact phrase '
+        "the user will say to trigger it.",
+        mutating=True,
+    )
+    async def create_routine(
+        self,
+        name: Annotated[str, Param("The trigger phrase", examples=("movie time", "goodnight"))],
+        steps: Annotated[str, Param("JSON array of {action, target, value} steps")],
+    ) -> str:
+        clean = name.strip()
+        if not clean:
+            raise IntegrationError("routine", "a routine needs a name to trigger it")
+        try:
+            raw = json.loads(steps)
+        except json.JSONDecodeError as exc:
+            raise IntegrationError("routine", f"the steps weren't valid JSON: {exc}") from exc
+        if not isinstance(raw, list) or not raw:
+            raise IntegrationError("routine", "a routine needs at least one step")
+        try:
+            parsed = [RoutineStep.model_validate(step) for step in raw]
+        except ValidationError as exc:
+            raise IntegrationError(
+                "routine",
+                "each step needs an action (on, off, brightness, colour, temperature, scene or "
+                f"script) and a target — {exc.error_count()} step(s) didn't fit",
+            ) from exc
+
+        others = [r for r in self.ctx.settings.routines.items if r.name.lower() != clean.lower()]
+        replaced = len(others) != len(self.ctx.settings.routines.items)
+        routine = Routine(name=clean, steps=parsed)
+        self.ctx.store.patch({"routines": {"items": [r.model_dump() for r in [*others, routine]]}})
+        verb = "Updated" if replaced else "Saved"
+        return f"{verb} '{clean}' with {len(parsed)} step(s). Say '{clean}' and I'll run it."
+
+    @tool(
+        "Run a saved routine by name. Use this whenever the user says a routine's trigger phrase "
+        "(the saved routines are listed in the environment), or asks to run one."
+    )
+    async def run_routine(self, name: Annotated[str, Param("The routine to run")]) -> str:
+        routine = self._find_routine(name)
+        if routine is None:
+            known = ", ".join(r.name for r in self.ctx.settings.routines.items) or "none saved yet"
+            raise IntegrationError(
+                "routine", f"I don't have a routine called '{name}'. Saved routines: {known}."
+            )
+        client = self.home.require_ha()
+        done = 0
+        failures: list[str] = []
+        for step in routine.steps:
+            try:
+                await self._run_step(client, step)
+                done += 1
+            except IntegrationError as exc:
+                failures.append(f"{step.action} {step.target} ({exc.message})")
+        if not failures:
+            return f"Done — ran '{routine.name}' ({done} action{'s' if done != 1 else ''})."
+        ran = f"ran {done} of {len(routine.steps)}" if done else "couldn't run any of it"
+        return f"Partly ran '{routine.name}' — {ran}. Trouble with: {'; '.join(failures)}."
+
+    @tool("List the saved routines and what each one does.")
+    async def list_routines(self) -> str:
+        items = self.ctx.settings.routines.items
+        if not items:
+            return "No routines saved yet — tell me what a phrase should do and I'll save it."
+        return "\n".join(
+            f"{r.name}: " + ", ".join(_describe_step(s) for s in r.steps) for r in items
+        )
+
+    @tool("Delete a saved routine.", mutating=True)
+    async def delete_routine(self, name: Annotated[str, Param("The routine to delete")]) -> str:
+        routine = self._find_routine(name)
+        if routine is None:
+            raise IntegrationError("routine", f"I don't have a routine called '{name}'")
+        remaining = [
+            r for r in self.ctx.settings.routines.items if r.name.lower() != routine.name.lower()
+        ]
+        self.ctx.store.patch({"routines": {"items": [r.model_dump() for r in remaining]}})
+        return f"Deleted the routine '{routine.name}'."
+
+    def _find_routine(self, name: str) -> Routine | None:
+        needle = name.strip().lower()
+        items = self.ctx.settings.routines.items
+        for routine in items:
+            if routine.name.lower() == needle:
+                return routine
+        for routine in items:
+            if needle and (needle in routine.name.lower() or routine.name.lower() in needle):
+                return routine
+        return None
+
+    async def _run_step(self, client: HomeAssistantClient, step: RoutineStep) -> None:
+        action, target, value = step.action, step.target, step.value
+        if action in ("on", "off"):
+            on = action == "on"
+            # An exact room name is a room command; a real light happens to sit in
+            # an area too, so only the exact match short-circuits to the whole room.
+            if target.strip().lower() in {a.lower() for a in client.areas()}:
+                room = client.in_area(target, domains=_ROOM_CONTROLLABLE)
+                if room:
+                    await client.set_many([e.entity_id for e in room], on=on)
+                    return
+            try:
+                entity = await self._resolve(target)
+            except IntegrationError:
+                entity = None
+            if entity is not None:
+                await (client.turn_on if on else client.turn_off)(entity.entity_id)
+                return
+            room = client.in_area(target, domains=_ROOM_CONTROLLABLE)
+            if room:
+                await client.set_many([e.entity_id for e in room], on=on)
+                return
+            raise IntegrationError("home assistant", f"no device or room called '{target}'")
+        if action == "brightness":
+            entity = await self._resolve(target, domain="light")
+            await client.set_brightness(entity.entity_id, _to_int(value, 100))
+            return
+        if action == "colour":
+            entity = await self._resolve(target, domain="light")
+            await client.call_service(
+                "light", "turn_on", entity.entity_id, color_name=(value or "white").lower()
+            )
+            return
+        if action == "temperature":
+            entity = await self._resolve(target, domain="climate")
+            await client.set_temperature(entity.entity_id, _to_float(value, 20.0))
+            return
+        if action == "scene":
+            entity = await self._resolve(target, domain="scene")
+            await client.activate_scene(entity.entity_id)
+            return
+        if action == "script":
+            entity = await self._resolve(target, domain="script")
+            await client.call_service("script", "turn_on", entity.entity_id)
+
     # ------------------------------------------------------------------- mqtt
 
     @tool("Read the most recent value published on an MQTT topic.")
@@ -389,3 +543,31 @@ class HomeSkill(Skill):
         client = self.home.require_mqtt()
         topics = client.topics()
         return ", ".join(topics[:40]) if topics else "No topics have reported yet."
+
+
+def _describe_step(step: RoutineStep) -> str:
+    if step.action in ("on", "off"):
+        return f"turn {step.action} {step.target}"
+    if step.action == "brightness":
+        return f"{step.target} to {step.value or '100'}%"
+    if step.action == "colour":
+        return f"{step.target} {step.value or 'white'}"
+    if step.action == "temperature":
+        return f"{step.target} to {step.value or '20'}°"
+    return f"{step.action} {step.target}"
+
+
+def _to_int(value: str, default: int) -> int:
+    digits = "".join(c for c in value if c.isdigit() or c == "-")
+    try:
+        return int(digits)
+    except ValueError:
+        return default
+
+
+def _to_float(value: str, default: float) -> float:
+    allowed = "".join(c for c in value if c.isdigit() or c in ".-")
+    try:
+        return float(allowed)
+    except ValueError:
+        return default

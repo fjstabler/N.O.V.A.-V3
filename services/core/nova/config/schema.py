@@ -284,6 +284,39 @@ class DesktopSettings(BaseModel):
     )
 
 
+#: The home actions a routine step can carry out. Kept small and deterministic
+#: so a saved routine runs the same way every time.
+RoutineAction = Literal["on", "off", "brightness", "colour", "temperature", "scene", "script"]
+
+
+class RoutineStep(BaseModel):
+    """One action inside a routine: do ``action`` to ``target`` (with ``value``)."""
+
+    action: RoutineAction = "on"
+    #: A device, a room/area, or a scene/script name — resolved when the routine runs.
+    target: str = ""
+    #: Brightness percent, colour name or temperature, depending on the action.
+    value: str = ""
+
+
+class Routine(BaseModel):
+    """A named phrase that runs several home actions at once — like an Alexa routine."""
+
+    name: str = ""
+    steps: list[RoutineStep] = Field(default_factory=list)
+
+    @field_validator("name")
+    @classmethod
+    def _clean_name(cls, v: str) -> str:
+        return v.strip()
+
+
+class RoutinesSettings(BaseModel):
+    """User-defined routines: 'movie time' turns off the lights and starts the TV."""
+
+    items: list[Routine] = Field(default_factory=list)
+
+
 class HomeLabService(BaseModel):
     """One self-hosted service N.O.V.A. should understand."""
 
@@ -479,6 +512,7 @@ class NovaSettings(BaseModel):
     calendar: CalendarSettings = Field(default_factory=CalendarSettings)
     server: ServerSettings = Field(default_factory=ServerSettings)
     desktop: DesktopSettings = Field(default_factory=DesktopSettings)
+    routines: RoutinesSettings = Field(default_factory=RoutinesSettings)
     homelab: HomeLabSettings = Field(default_factory=HomeLabSettings)
     vision: VisionSettings = Field(default_factory=VisionSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)

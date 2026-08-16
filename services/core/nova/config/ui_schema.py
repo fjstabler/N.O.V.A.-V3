@@ -31,6 +31,7 @@ SECTIONS: list[tuple[str, str, str]] = [
     ("calendar", "Calendar", "CalDAV accounts and reminders"),
     ("server", "Server", "Ubuntu monitoring and administration"),
     ("desktop", "Desktop", "Open pages, files and apps on this machine"),
+    ("routines", "Routines", "Saved phrases that run several home actions at once"),
     ("homelab", "Home Lab", "Self-hosted services"),
     ("vision", "Vision", "Screen and camera understanding"),
     ("security", "Security", "Room-watch: face recognition alerts"),
