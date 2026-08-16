@@ -180,6 +180,26 @@ class HomeAssistantClient:
     def get(self, entity_id: str) -> HAEntity | None:
         return self._entities.get(entity_id)
 
+    def areas(self) -> list[str]:
+        """Every distinct area (room) the exposed entities belong to."""
+        return sorted({e.area for e in self._entities.values() if e.area})
+
+    def in_area(self, area: str, *, domains: tuple[str, ...] = ()) -> list[HAEntity]:
+        """Entities in a room, matched fuzzily and optionally filtered by domain.
+
+        "living room" matches the area "Living Room"; an exact area name wins,
+        but a substring ("bedroom" for "Main Bedroom") still resolves so spoken
+        room names do not have to be exact.
+        """
+        needle = area.strip().lower()
+        if not needle:
+            return []
+        exact = [e for e in self._entities.values() if e.area.lower() == needle]
+        pool = exact or [e for e in self._entities.values() if e.area and needle in e.area.lower()]
+        if domains:
+            pool = [e for e in pool if e.domain in domains]
+        return sorted(pool, key=lambda e: e.friendly_name.lower())
+
     def resolve(self, text: str, *, domain: str = "") -> list[HAEntity]:
         """Find entities matching a spoken description, best match first."""
         needle = text.strip().lower()
@@ -280,6 +300,23 @@ class HomeAssistantClient:
             domain if domain in TOGGLEABLE else "homeassistant", "turn_off", entity_id
         )
         return f"turned off {self._name(entity_id)}"
+
+    async def set_many(self, entity_ids: list[str], *, on: bool) -> int:
+        """Turn a group of entities on or off in a single service call.
+
+        Uses the domain-agnostic ``homeassistant.turn_on``/``turn_off``, which
+        dispatches each id to its own domain — so a mixed list of lights and
+        switches for one room is one round trip, not one per device.
+        """
+        ids = [e for e in entity_ids if e in self._entities]
+        if not ids:
+            return 0
+        service = "turn_on" if on else "turn_off"
+        # Posted directly rather than through call_service, which resolves a
+        # single id; here the payload's entity_id is a list HA fans out itself.
+        await self._post(f"/services/homeassistant/{service}", {"entity_id": ids})
+        log.info("ha_set_many", service=service, count=len(ids))
+        return len(ids)
 
     async def set_brightness(self, entity_id: str, percent: int) -> str:
         percent = max(0, min(100, percent))

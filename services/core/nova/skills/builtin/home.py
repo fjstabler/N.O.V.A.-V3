@@ -13,6 +13,11 @@ from ..base import Param, Skill, tool
 #: Domains offered to the model for a generic on/off, in resolution order.
 _CONTROLLABLE = ("light", "switch", "fan", "media_player", "cover", "lock", "scene", "script")
 
+#: Domains a blanket "turn the room off/on" should touch. Covers and locks are
+#: excluded on purpose — closing a blind or unlocking a door is never what
+#: "turn everything off" means, and both need their own explicit intent.
+_ROOM_CONTROLLABLE = ("light", "switch", "fan", "media_player")
+
 
 class HomeSkill(Skill):
     name = "home"
@@ -102,6 +107,97 @@ class HomeSkill(Skill):
     ) -> str:
         entity = await self._resolve(name)
         return entity.describe()
+
+    @tool(
+        "Turn a whole room's devices on or off at once — 'turn off the bedroom', "
+        "'turn off all the lights in the kitchen'. Pass a device type in `only` to "
+        "limit it to that kind (e.g. only lights); leave it blank for lights, "
+        "switches, fans and media players together. Covers and locks are never "
+        "included — use set_cover or set_lock for those.",
+        mutating=True,
+    )
+    async def control_room(
+        self,
+        room: Annotated[str, Param("Room / area name", examples=("bedroom", "living room"))],
+        action: Annotated[Literal["on", "off"], Param("Turn the room on or off")],
+        only: Annotated[
+            str, Param("Limit to one device type", examples=("light", "switch", "fan"))
+        ] = "",
+    ) -> str:
+        client = self.home.require_ha()
+        domains = (only,) if only else _ROOM_CONTROLLABLE
+        entities = client.in_area(room, domains=domains)
+        if not entities:
+            known = ", ".join(client.areas()) or "none are named"
+            kind = f" {only}" if only else ""
+            raise IntegrationError(
+                "home assistant",
+                f"I couldn't find any{kind} devices in '{room}'. Rooms I know: {known}.",
+            )
+        area = entities[0].area
+        count = await client.set_many([e.entity_id for e in entities], on=action == "on")
+        noun = "device" if count == 1 else "devices"
+        return f"Turned {action} {count} {noun} in {area}."
+
+    @tool(
+        "Get an overview of the whole home: what's on, thermostat readings, and "
+        "anything left open or unlocked. Use for 'how's the house', 'is everything "
+        "off', 'did I leave anything on'."
+    )
+    async def home_overview(self) -> str:
+        client = self.home.require_ha()
+        entities = client.entities()
+        on_devices = [
+            e
+            for e in entities
+            if e.domain in ("light", "switch", "fan", "media_player") and e.state == "on"
+        ]
+        open_covers = [e for e in entities if e.domain == "cover" and e.state == "open"]
+        unlocked = [e for e in entities if e.domain == "lock" and e.state == "unlocked"]
+
+        lines: list[str] = []
+        if on_devices:
+            names = ", ".join(e.friendly_name for e in on_devices[:12])
+            more = f" (+{len(on_devices) - 12} more)" if len(on_devices) > 12 else ""
+            lines.append(f"{len(on_devices)} on: {names}{more}.")
+        else:
+            lines.append("Nothing is on.")
+        climate = [
+            f"{e.friendly_name} {e.attributes['current_temperature']}°"
+            for e in entities
+            if e.domain == "climate" and e.attributes.get("current_temperature") is not None
+        ]
+        if climate:
+            lines.append("Climate: " + ", ".join(climate) + ".")
+        if open_covers:
+            lines.append("Open: " + ", ".join(e.friendly_name for e in open_covers) + ".")
+        if unlocked:
+            lines.append("Unlocked: " + ", ".join(e.friendly_name for e in unlocked) + ".")
+        return "\n".join(lines)
+
+    @tool(
+        "Get temperatures across the home — thermostats and temperature sensors. "
+        "Use for 'how warm is it', 'what's the temperature upstairs'."
+    )
+    async def climate_summary(self) -> str:
+        client = self.home.require_ha()
+        lines: list[str] = []
+        for entity in client.entities("climate"):
+            bits = [entity.friendly_name]
+            if (current := entity.attributes.get("current_temperature")) is not None:
+                bits.append(f"now {current}°")
+            if (target := entity.attributes.get("temperature")) is not None:
+                bits.append(f"set to {target}°")
+            if entity.state:
+                bits.append(f"({entity.state})")
+            lines.append(" ".join(bits))
+        for entity in client.entities("sensor"):
+            if entity.attributes.get("device_class") == "temperature":
+                unit = entity.attributes.get("unit_of_measurement", "°")
+                lines.append(f"{entity.friendly_name}: {entity.state}{unit}")
+        if not lines:
+            return "No thermostats or temperature sensors found."
+        return "\n".join(lines)
 
     @tool("Get a summary of everything currently on in the home.")
     async def whats_on(self) -> str:

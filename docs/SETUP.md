@@ -151,6 +151,19 @@ Create a long-lived access token in your HA profile, then fill in
 correct the instant someone flips a physical switch. Cameras are included by
 default — see **Showing things on screen** below for what that unlocks.
 
+Beyond controlling one device at a time, N.O.V.A. understands the home as a
+whole:
+
+- **Whole-room control** — "turn off the bedroom", "turn off all the lights in
+  the kitchen". It resolves the room (fuzzily: "bedroom" finds "Main Bedroom"),
+  gathers the lights, switches, fans and media players in it, and switches them
+  in one call. Covers and locks are never swept up by a blanket room command —
+  those keep their own explicit "open the blinds" / "lock the door".
+- **House overview** — "how's the house", "did I leave anything on" lists what's
+  on, thermostat readings, and anything left open or unlocked.
+- **Climate readout** — "how warm is it", "what's the temperature upstairs"
+  reads every thermostat and temperature sensor.
+
 ### MQTT
 
 **MQTT → host, port, credentials.** Subscribed topics are retained per topic, so
@@ -267,6 +280,24 @@ its own extra:
 ```bash
 pip install -e "services/core[vision]"
 ```
+
+### On-device camera detection
+
+Separate from the cloud description above, N.O.V.A. can *detect* on a local
+camera without anything leaving the machine — instant, private, no key. Enable
+a camera (**Vision → Camera enabled**, plus a device index) and it can:
+
+- **Detect motion** — "is anything moving in the office", "is the room still".
+  Two frames a moment apart are differenced in NumPy on the spot; nothing is
+  uploaded. Tune how much movement counts as motion with **Vision → Motion
+  sensitivity** (lower is more sensitive).
+- **Count people and name them** — "how many people are here", "who's in the
+  room". This uses the same local face detection room-watch uses, so it shares
+  the `vision` extra and the face models (`python scripts/fetch_models.py
+  --only face`), and names anyone you've enrolled.
+
+Motion detection needs only NumPy; the people count needs OpenCV and the face
+models, and says so plainly if they're missing rather than failing.
 
 ### Mobile web client (e.g. an iPhone, over Tailscale)
 

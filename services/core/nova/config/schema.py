@@ -345,6 +345,9 @@ class VisionSettings(BaseModel):
     named_cameras: list[NamedCamera] = Field(default_factory=list)
     max_image_edge: int = Field(default=1280, ge=256, le=4096)
     jpeg_quality: int = Field(default=82, ge=40, le=100)
+    #: Fraction of the frame that must change between two shots for on-device
+    #: motion detection to call it movement — lower is more sensitive.
+    motion_sensitivity: float = Field(default=0.02, ge=0.001, le=0.5)
 
 
 class SecuritySettings(BaseModel):
