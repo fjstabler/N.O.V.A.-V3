@@ -417,6 +417,32 @@ class SecuritySettings(BaseModel):
     ntfy_topic: str = ""
 
 
+class FrigateSettings(BaseModel):
+    """Frigate NVR, read through Home Assistant.
+
+    Frigate runs real on-device object detection (person, car, animal) with its
+    own models and exposes the results to Home Assistant as entities N.O.V.A.
+    already mirrors — a ``binary_sensor.<camera>_<object>`` that is ``on`` while
+    the object is in view, plus a count sensor. Reading those is far more reliable
+    than a webcam hunting for a face, so when Frigate is present it is where
+    "is anyone at the door" and camera alerts should come from.
+
+    Nothing to point at N.O.V.A. beyond enabling it: the sensors are discovered
+    from the live Home Assistant entity list.
+    """
+
+    enabled: bool = False
+    #: The Frigate object label to watch — person, car, dog, etc. Sensors are
+    #: named ``*_<object>``.
+    object_type: str = Field(default="person")
+    #: Speak/push an alert when the object first appears on a camera.
+    alert_on_detection: bool = True
+    #: Limit alerts to these Frigate camera names (matched loosely); empty = all.
+    cameras: list[str] = Field(default_factory=list)
+    #: Minimum time between alerts for the same camera.
+    alert_cooldown_seconds: float = Field(default=120.0, ge=5.0, le=3600.0)
+
+
 class PresenceSettings(BaseModel):
     """Whether N.O.V.A. thinks you are in the room, used to route notifications.
 
@@ -516,6 +542,7 @@ class NovaSettings(BaseModel):
     homelab: HomeLabSettings = Field(default_factory=HomeLabSettings)
     vision: VisionSettings = Field(default_factory=VisionSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
+    frigate: FrigateSettings = Field(default_factory=FrigateSettings)
     presence: PresenceSettings = Field(default_factory=PresenceSettings)
     plugins: PluginSettings = Field(default_factory=PluginSettings)
     developer: DeveloperSettings = Field(default_factory=DeveloperSettings)

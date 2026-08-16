@@ -21,6 +21,7 @@ from typing import Any
 from .ai.orchestrator import Orchestrator
 from .config import SettingsStore, describe_settings
 from .context import NovaContext
+from .frigate_watch import FrigateService
 from .integrations.services import CalendarService, HomeLabService, HomeService
 from .memory.service import MemoryService
 from .notifications import NotificationService
@@ -89,6 +90,7 @@ class NovaApplication:
         register(CalendarService(self.ctx))
         register(SecurityService(self.ctx))
         register(PresenceService(self.ctx))
+        register(FrigateService(self.ctx))
         register(SkillRegistry(self.ctx))
         register(Orchestrator(self.ctx))
         register(NotificationService(self.ctx))

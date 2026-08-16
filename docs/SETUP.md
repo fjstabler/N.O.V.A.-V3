@@ -386,6 +386,46 @@ runs the same OpenCV models `look_at_camera` already depends on
 (`opencv-python-headless`), so nothing new needs installing beyond the two
 model files above.
 
+**Face detection has real limits.** It only fires when someone is looking at
+the camera in decent light; walk in facing away or stand across a dim room and
+it sees nothing. For dependable "is a person here" — proper detection of whole
+people regardless of orientation — use **Frigate** below instead.
+
+### Frigate: reliable person detection through Home Assistant
+
+If you have a real camera setup, [Frigate](https://frigate.video/) is the
+grown-up version of the webcam room-watch above. It runs on-device object
+detection (person, car, animal) with its own models and — crucially — it plugs
+straight into Home Assistant, so N.O.V.A. reads its results from the same live
+entity cache it already uses for lights. No webcam guesswork, no face angle to
+catch: Frigate says "person on the driveway", N.O.V.A. acts on it.
+
+Setup:
+
+1. **Run Frigate** and add its official Home Assistant integration (see
+   Frigate's own docs). That gives HA a `binary_sensor.<camera>_person` for
+   each camera (on while a person is in view) and a person-count sensor.
+2. **Turn it on in N.O.V.A.**: **Frigate → Enabled**. That's the only required
+   setting — the cameras and sensors are discovered automatically from Home
+   Assistant, so there's nothing to point at by hand.
+3. **Optional tuning** under **Frigate**: **Object type** (defaults to
+   `person`; set `car`, `dog`, etc. to watch for something else), **Cameras**
+   (limit alerts to specific camera names; empty = all), **Alert cooldown**,
+   and **Alert on detection** (off to keep the query tools but silence the
+   pushes).
+
+Then:
+
+- **Ask** — *"is anyone at the front door"*, *"is anyone in the office"*,
+  *"who's around"* → answered from Frigate's detection, reliably.
+- **Get alerted** — when a person first appears on a camera, N.O.V.A. routes it
+  through the same presence logic as everything else: **spoken if you're home,
+  pushed to your phone if you're out** (set up the phone push under
+  **Notifications** as below). That's the camera alert that actually works.
+
+Frigate needs Home Assistant connected; with it, nothing else is required on
+N.O.V.A.'s side — no extra Python packages, no models to download here.
+
 ### Reaching you: presence-aware notifications
 
 N.O.V.A. can send you a notification and route it to wherever you actually
