@@ -85,6 +85,12 @@ vision = [
   "opencv-python-headless>=4.9",
   "pillow>=10.3",
 ]
+# On-device person detection ("is anyone in the room"). Separate because it
+# pulls in PyTorch, which is large; the model weights download themselves on
+# first use. Nothing else needs it, and the camera surface degrades without it.
+person = [
+  "ultralytics>=8.1,<9",
+]
 dev = [
   "pytest>=8.2",
   "pytest-asyncio>=0.23",

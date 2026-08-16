@@ -287,17 +287,33 @@ Separate from the cloud description above, N.O.V.A. can *detect* on a local
 camera without anything leaving the machine — instant, private, no key. Enable
 a camera (**Vision → Camera enabled**, plus a device index) and it can:
 
-- **Detect motion** — "is anything moving in the office", "is the room still".
-  Two frames a moment apart are differenced in NumPy on the spot; nothing is
-  uploaded. Tune how much movement counts as motion with **Vision → Motion
-  sensitivity** (lower is more sensitive).
-- **Count people and name them** — "how many people are here", "who's in the
-  room". This uses the same local face detection room-watch uses, so it shares
-  the `vision` extra and the face models (`python scripts/fetch_models.py
-  --only face`), and names anyone you've enrolled.
+- **See whether anyone is there** — *"is anyone in the room"*, *"is my room
+  empty"*. This is the reliable one: a small local **YOLO** model finds whole
+  people at any angle, in most light — not a face it has to catch head-on, and
+  no identity is read or stored. This is the right tool for "just tell me when
+  someone's here" on a plain USB webcam. It needs the `person` extra:
 
-Motion detection needs only NumPy; the people count needs OpenCV and the face
-models, and says so plainly if they're missing rather than failing.
+  ```bash
+  .venv/bin/pip install -e "services/core[person]"
+  ```
+
+  That pulls in PyTorch (large, one-time) and the model weights download
+  themselves on first use — nothing to fetch by hand. If you have an NVIDIA
+  GPU it's used automatically; on CPU a check still takes a fraction of a
+  second. Tune sensitivity with **Vision → Person confidence** (lower catches
+  more, with more false positives).
+- **Detect motion** — *"is anything moving in the office"*, *"is the room
+  still"*. Two frames a moment apart are differenced in NumPy on the spot;
+  needs only NumPy, nothing else. Tune with **Vision → Motion sensitivity**.
+- **Count people and name them** — *"who's in the room"*. This is the
+  face-recognition path (the same one room-watch uses), so it's only for when
+  you actually want *identity*; it shares the `vision` extra and the face
+  models (`python scripts/fetch_models.py --only face`). For plain presence,
+  prefer "is anyone there" above — it doesn't touch faces at all.
+
+Each degrades on its own: motion needs only NumPy, person detection needs the
+`person` extra, the face count needs OpenCV and the face models — and whichever
+is missing says so plainly rather than failing.
 
 ### Mobile web client (e.g. an iPhone, over Tailscale)
 

@@ -1,16 +1,18 @@
-"""On-device camera detection: motion and faces, without the cloud.
+"""On-device camera detection: people, motion and faces, without the cloud.
 
 Where the vision skill *describes* a camera by sending a frame to a cloud model,
 this *detects* on the machine itself — instantly, privately, with no key needed:
 
+* **people** — a local YOLO model finds whole people at any angle, the reliable
+  answer to "is anyone here" (no face to catch, no identity read or stored);
 * **motion** — two frames a moment apart, differenced in NumPy: "is anything
-  moving in here?"
-* **faces / people** — the same local YuNet detector room-watch uses, to count
-  who is in view and name anyone enrolled.
+  moving in here?";
+* **faces** — the same local YuNet detector room-watch uses, to count who is in
+  view and name anyone enrolled (only when you want identity).
 
-Both degrade cleanly: motion needs only NumPy, and the face count borrows the
-security service's engine, reporting plainly if OpenCV or the model files are
-not installed rather than failing.
+Each degrades cleanly: motion needs only NumPy; person detection needs the
+`person` extra; the face count borrows the security engine — and any that is
+missing says so plainly rather than failing.
 """
 
 from __future__ import annotations
@@ -20,13 +22,14 @@ from typing import Annotated
 
 from ...integrations.detection import MotionDetector
 from ...integrations.local_camera import local_camera_pool
+from ...integrations.person_detect import PersonDetector, describe_people
 from ...runtime.errors import MissingDependency, MissingModel, SkillError
 from ..base import Param, Skill, tool
 
 
 class CameraSkill(Skill):
     name = "camera"
-    description = "Detect motion and count people on a local camera, entirely on-device."
+    description = "Detect people, motion and faces on a local camera, entirely on-device."
     category = "Vision"
 
     def is_available(self) -> tuple[bool, str]:
@@ -34,8 +37,30 @@ class CameraSkill(Skill):
             return False, "the camera is disabled in settings"
         return True, ""
 
+    async def setup(self) -> None:
+        # Built once so the YOLO weights load and cache on first use, not per call.
+        self._person_detector = PersonDetector()
+
     def _camera_index(self, requested: int) -> int:
         return requested if requested >= 0 else self.ctx.settings.vision.camera_index
+
+    @tool(
+        "Look at a camera and say whether anyone is there — reliable on-device person "
+        "detection that sees whole people at any angle. No face recognition, nothing "
+        "uploaded. Use for 'is anyone in the room', 'is someone here', 'is my room empty'."
+    )
+    async def look_for_people(
+        self,
+        camera_index: Annotated[int, Param("Which camera; -1 uses the default")] = -1,
+    ) -> str:
+        self._person_detector.confidence = self.ctx.settings.vision.person_confidence
+        index = self._camera_index(camera_index)
+        frame = await local_camera_pool.read_bgr(index)
+        try:
+            confidences = await asyncio.to_thread(self._person_detector.detect, frame)
+        except (MissingDependency, MissingModel) as exc:
+            raise SkillError(str(exc)) from exc
+        return describe_people(confidences)
 
     @tool(
         "Check a camera for movement right now — two quick frames compared "

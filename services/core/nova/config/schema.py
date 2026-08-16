@@ -381,6 +381,9 @@ class VisionSettings(BaseModel):
     #: Fraction of the frame that must change between two shots for on-device
     #: motion detection to call it movement — lower is more sensitive.
     motion_sensitivity: float = Field(default=0.02, ge=0.001, le=0.5)
+    #: Confidence a YOLO person detection must clear to count — lower catches
+    #: more (and more false positives). Needs the `person` extra installed.
+    person_confidence: float = Field(default=0.4, ge=0.1, le=0.95)
 
 
 class SecuritySettings(BaseModel):
