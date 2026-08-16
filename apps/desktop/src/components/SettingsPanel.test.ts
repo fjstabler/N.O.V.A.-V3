@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { read, write } from './SettingsPanel';
+import { buildDeviceOptions, read, write } from './SettingsPanel';
 
 describe('write', () => {
   it('replaces a whole list in one step, as Add/Remove do', () => {
@@ -59,5 +59,42 @@ describe('write', () => {
     write(original, ['calendar', 'accounts', '0', 'name'], 'Apple');
 
     expect(original).toEqual(snapshot);
+  });
+});
+
+describe('buildDeviceOptions', () => {
+  const entities = [
+    { name: 'Kitchen Light', area: 'Kitchen', domain: 'light' },
+    { name: 'Kettle', area: 'Kitchen', domain: 'switch' },
+    { name: 'Bedroom Fan', area: 'Bedroom', domain: 'fan' },
+    { name: 'Living Room Temp', area: 'Living Room', domain: 'sensor' }, // not controllable
+  ];
+
+  it('lists whole rooms first, then controllable devices', () => {
+    const options = buildDeviceOptions(entities);
+    // Rooms (sorted) come before devices.
+    expect(options[0]).toEqual({ value: 'Bedroom', label: 'Bedroom (whole room)' });
+    const values = options.map((o) => o.value);
+    expect(values).toContain('Kitchen Light');
+    expect(values).toContain('Kettle');
+  });
+
+  it('excludes non-controllable domains like sensors', () => {
+    const values = buildDeviceOptions(entities).map((o) => o.value);
+    expect(values).not.toContain('Living Room Temp');
+  });
+
+  it('labels a device with its room', () => {
+    const kitchen = buildDeviceOptions(entities).find((o) => o.value === 'Kitchen Light');
+    expect(kitchen?.label).toBe('Kitchen Light — Kitchen');
+  });
+
+  it('de-duplicates devices that share a name', () => {
+    const dupes = [
+      { name: 'Lamp', area: 'A', domain: 'light' },
+      { name: 'Lamp', area: 'A', domain: 'light' },
+    ];
+    const lamps = buildDeviceOptions(dupes).filter((o) => o.value === 'Lamp');
+    expect(lamps).toHaveLength(1);
   });
 });

@@ -205,6 +205,12 @@ export interface SettingsField {
     | 'list-of-groups'
     | 'string-list';
   options?: { value: string; label: string }[];
+  /**
+   * When set, the control's options are filled in live by the UI rather than
+   * fixed in the schema — e.g. `home_devices` populates a dropdown from the
+   * current Home Assistant devices and rooms.
+   */
+  optionsSource?: string;
   fields?: SettingsField[];
   itemLabelKey?: string | null;
   min?: number;

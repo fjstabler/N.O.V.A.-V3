@@ -108,6 +108,12 @@ def _describe_field(name: str, field: FieldInfo, model: type[BaseModel]) -> dict
             entry["control"] = "password"
         elif annotation is str and name in ("persona",):
             entry["control"] = "textarea"
+        elif annotation is str and extra.get("options_source"):
+            # A dropdown whose choices are filled in live by the UI (e.g. the
+            # current Home Assistant devices) rather than fixed in the schema.
+            entry["control"] = "select"
+            entry["options"] = []
+            entry["optionsSource"] = str(extra["options_source"])
     else:
         entry["control"] = "text"
 

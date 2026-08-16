@@ -293,16 +293,22 @@ class RoutineStep(BaseModel):
     """One action inside a routine: do ``action`` to ``target`` (with ``value``)."""
 
     action: RoutineAction = "on"
-    #: A device, a room/area, or a scene/script name — resolved when the routine runs.
-    target: str = ""
+    #: A device, a room/area, or a scene/script name — resolved when the routine
+    #: runs. ``options_source`` tells the settings panel to offer this as a
+    #: dropdown of the live Home Assistant devices and rooms instead of a text box.
+    target: str = Field(
+        default="",
+        description="Device or room",
+        json_schema_extra={"options_source": "home_devices"},
+    )
     #: Brightness percent, colour name or temperature, depending on the action.
-    value: str = ""
+    value: str = Field(default="", description="Brightness %, colour or temperature (if needed)")
 
 
 class Routine(BaseModel):
     """A named phrase that runs several home actions at once — like an Alexa routine."""
 
-    name: str = ""
+    name: str = Field(default="", description="The phrase you say to trigger this routine")
     steps: list[RoutineStep] = Field(default_factory=list)
 
     @field_validator("name")

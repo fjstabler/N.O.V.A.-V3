@@ -11,12 +11,64 @@
  * the user actually replaces them.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { REDACTED, Requests, type SettingsField, type SettingsSection } from '@protocol';
 import type { BridgeClient } from '@/lib/bridge';
 import { useNova, type Settings } from '@/state/store';
 
 type Draft = Record<string, unknown>;
+
+export interface DeviceOption {
+  value: string;
+  label: string;
+}
+
+/** Live Home Assistant devices/rooms, so a routine's device field is a dropdown. */
+const HomeDevicesContext = createContext<DeviceOption[]>([]);
+
+/** Domains worth offering as a routine target. */
+const CONTROLLABLE_DOMAINS = new Set([
+  'light',
+  'switch',
+  'fan',
+  'media_player',
+  'cover',
+  'lock',
+  'scene',
+  'script',
+  'climate',
+]);
+
+interface HomeEntity {
+  name: string;
+  area?: string;
+  domain: string;
+}
+
+/**
+ * Turn the live Home Assistant entity list into dropdown options: whole rooms
+ * first (so "the bedroom" is easy to pick), then the controllable devices,
+ * de-duplicated by name and labelled with their room.
+ */
+export function buildDeviceOptions(entities: HomeEntity[]): DeviceOption[] {
+  const areas = Array.from(
+    new Set(entities.map((entity) => entity.area).filter((area): area is string => Boolean(area))),
+  )
+    .map((area) => ({ value: area, label: `${area} (whole room)` }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  const seen = new Set<string>();
+  const devices = entities
+    .filter((entity) => CONTROLLABLE_DOMAINS.has(entity.domain) && entity.name)
+    .filter((entity) => (seen.has(entity.name) ? false : (seen.add(entity.name), true)))
+    .map((entity) => ({
+      value: entity.name,
+      label: entity.area ? `${entity.name} — ${entity.area}` : entity.name,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  return [...areas, ...devices];
+}
 
 /** Read a dotted path out of a nested object. */
 export function read(source: unknown, path: string[]): unknown {
@@ -73,6 +125,7 @@ interface FieldProps {
 function Field({ field, path, value, onChange }: FieldProps): JSX.Element | null {
   const id = path.join('.');
   const set = (next: unknown) => onChange(path, next);
+  const homeDevices = useContext(HomeDevicesContext);
 
   if (field.control === 'group') {
     return (
@@ -186,7 +239,24 @@ function Field({ field, path, value, onChange }: FieldProps): JSX.Element | null
         />,
       );
 
-    case 'select':
+    case 'select': {
+      const fromHome = field.optionsSource === 'home_devices';
+      const options = fromHome ? homeDevices : (field.options ?? []);
+      // A device dropdown with nothing live to show (Home Assistant not
+      // connected) falls back to a text box, so the routine can still be typed.
+      if (fromHome && options.length === 0) {
+        return row(
+          <input
+            id={id}
+            type="text"
+            className="settings__input"
+            placeholder="device or room name"
+            value={String(value ?? '')}
+            onChange={(event) => set(event.target.value)}
+            spellCheck={false}
+          />,
+        );
+      }
       return row(
         <select
           id={id}
@@ -194,13 +264,15 @@ function Field({ field, path, value, onChange }: FieldProps): JSX.Element | null
           value={String(value ?? field.default ?? '')}
           onChange={(event) => set(event.target.value)}
         >
-          {field.options?.map((option) => (
+          {fromHome && <option value="">Choose a device or room…</option>}
+          {options.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>
           ))}
         </select>,
       );
+    }
 
     case 'password':
       return row(
@@ -272,6 +344,26 @@ export function SettingsPanel({ client }: { client: BridgeClient | null }): JSX.
   const [active, setActive] = useState<string>('assistant');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deviceOptions, setDeviceOptions] = useState<DeviceOption[]>([]);
+
+  // Pull the live Home Assistant devices so the routine editor's device fields
+  // are dropdowns of what actually exists, not free text. Silent on failure —
+  // those fields simply fall back to a text box (see the select control).
+  useEffect(() => {
+    if (!open || !client) return;
+    let cancelled = false;
+    void client
+      .request<{ entities?: HomeEntity[] }>(Requests.HomeEntities, { domain: '' })
+      .then((response) => {
+        if (!cancelled) setDeviceOptions(buildDeviceOptions(response.entities ?? []));
+      })
+      .catch(() => {
+        /* Home Assistant not connected — leave the fields as text inputs. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, client]);
 
   // Re-seed the draft whenever the panel opens, so a cancelled edit is not
   // silently carried into the next session.
@@ -329,6 +421,7 @@ export function SettingsPanel({ client }: { client: BridgeClient | null }): JSX.
   return (
     <>
       <div className="settings__scrim" onClick={() => toggle(false)} role="presentation" />
+      <HomeDevicesContext.Provider value={deviceOptions}>
       <aside className="settings" role="dialog" aria-label="Settings">
         <header className="settings__header">
           <h2>Settings</h2>
@@ -431,6 +524,7 @@ export function SettingsPanel({ client }: { client: BridgeClient | null }): JSX.
           </button>
         </footer>
       </aside>
+      </HomeDevicesContext.Provider>
     </>
   );
 }
