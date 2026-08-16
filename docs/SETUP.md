@@ -5,7 +5,9 @@
 - Python 3.11–3.13 (3.14 works, minus the wake word — see below)
 - Node.js 20 or newer
 - Linux, Windows or macOS
-- An OpenAI API key (the only paid dependency)
+- An OpenAI API key (the everyday model — the only strictly required paid key)
+- Optionally, an Anthropic API key for the advanced reasoning tier (see below);
+  without one, everything still runs on OpenAI
 
 On Debian/Ubuntu the voice stack also needs PortAudio:
 
@@ -107,6 +109,39 @@ token.
 ### Minimum viable configuration
 
 Paste an OpenAI key into **Reasoning → API key**. That is enough to talk to it.
+
+### Advanced reasoning (Claude)
+
+N.O.V.A. runs two reasoning tiers. Everyday commands — "turn off the kitchen
+light", "what's the weather", "set a timer" — stay on the fast OpenAI model.
+Coding, controlling parts of your system, and genuinely involved requests are
+routed to Anthropic's Claude (Sonnet 5 by default), which is stronger at exactly
+those things.
+
+Paste an Anthropic key into **Advanced reasoning → API key** and the routing
+turns on automatically. Nothing else is required — the everyday tier is
+untouched, and each turn is sent to whichever model suits it.
+
+- **No Anthropic key?** Everything keeps working. Every request — coding
+  included — falls back to OpenAI, so N.O.V.A. is never worse than V3 for the
+  want of a second key.
+- **Only an Anthropic key?** The everyday tier borrows Claude too rather than
+  refusing, so a single key is a complete configuration either way.
+- **Auto-route** decides per turn using the wording of the request. Turn it off
+  (**Advanced reasoning → Auto-route**) to keep everything on the fast tier
+  *except* when you ask explicitly — "think hard about…", "use Claude for…".
+- **Model and budget.** `model` and `max_output_tokens` are adjustable; the
+  default 4096-token budget covers both Claude's reply and, on Sonnet 5, its own
+  reasoning.
+
+Install the SDK with the `ai` extra (already included in `make setup`):
+
+```bash
+pip install -e "services/core[ai]"   # openai + anthropic
+```
+
+If the `anthropic` package is missing, the advanced tier simply reports itself
+unavailable and the everyday tier carries on.
 
 ### Home Assistant
 
@@ -297,6 +332,7 @@ secrets you would rather not have on disk:
 
 ```bash
 export NOVA_OPENAI__API_KEY=sk-...
+export NOVA_ANTHROPIC__API_KEY=sk-ant-...   # optional advanced reasoning tier
 export NOVA_TRANSPORT__PORT=8899
 export NOVA_HOME=/opt/nova          # relocate config, data and models
 ```

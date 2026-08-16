@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nova-core"
-version = "3.0.0"
+version = "4.0.0"
 description = "N.O.V.A. — local-first assistant core service"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -57,9 +57,12 @@ voice = [
   "nova-core[stt]",
   "nova-core[tts]",
 ]
-# Cloud reasoning (the one permitted paid dependency).
+# Cloud reasoning. Two tiers: OpenAI for everyday commands, Anthropic's Claude
+# for coding, system control and complex requests. Either can be absent — the
+# code degrades to whichever is installed and configured.
 ai = [
   "openai>=1.40,<3",
+  "anthropic>=0.40,<1",
 ]
 # Semantic memory recall. Without it memory falls back to SQLite FTS5.
 embeddings = [

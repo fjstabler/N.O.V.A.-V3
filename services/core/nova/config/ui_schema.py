@@ -20,7 +20,8 @@ from .schema import NovaSettings
 #: Presentation order and human labels for the top-level sections.
 SECTIONS: list[tuple[str, str, str]] = [
     ("assistant", "Assistant", "Identity, persona and locale"),
-    ("openai", "Reasoning", "OpenAI — the only cloud dependency"),
+    ("openai", "Reasoning", "OpenAI — the everyday model"),
+    ("anthropic", "Advanced reasoning", "Claude — coding, system control and complex requests"),
     ("voice", "Voice", "Wake word, transcription and synthesis"),
     ("appearance", "Appearance", "Theme, motion and rendering"),
     ("memory", "Memory", "What N.O.V.A. remembers, and for how long"),

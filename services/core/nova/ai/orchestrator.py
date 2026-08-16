@@ -26,8 +26,10 @@ from ..context import NovaContext
 from ..runtime import NovaState, Service, Topics
 from ..runtime.errors import ConfirmationRequired, NovaError
 from ..skills.registry import SkillRegistry
+from .anthropic_client import AnthropicClient
 from .client import Completion, OpenAIClient, ReasoningUnavailable, ToolCall
 from .prompt import build_messages, build_system_prompt, facts_for_prompt, summarise_for_memory
+from .router import wants_advanced
 
 #: Splits on sentence-ending punctuation followed by whitespace.
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+|(?<=[.!?])$")
@@ -90,6 +92,13 @@ class Orchestrator(Service):
             base_url=ctx.settings.openai.base_url,
             timeout=ctx.settings.openai.request_timeout,
         )
+        #: The advanced tier. Same interface as `self.client`; a turn is routed
+        #: to one or the other by `_select_backend`.
+        self.advanced = AnthropicClient(
+            api_key=ctx.settings.anthropic.api_key,
+            model=ctx.settings.anthropic.model,
+            timeout=ctx.settings.anthropic.request_timeout,
+        )
         self._turn_lock = asyncio.Lock()
         self._current: asyncio.Task[TurnResult] | None = None
         self._last_activity = 0.0
@@ -97,20 +106,33 @@ class Orchestrator(Service):
         #: instance state rather than a parameter threaded through every
         #: method, because the lock guarantees only one turn runs at a time.
         self._current_source = "voice"
+        #: Which model the current turn is using. Set by `_select_backend` at
+        #: the top of every reasoning turn; the lock keeps it single-writer.
+        self._turn_backend = "basic"
+        self._turn_client: OpenAIClient | AnthropicClient = self.client
+        self._turn_model = ctx.settings.openai.model
+        self._turn_max_tokens = ctx.settings.openai.max_output_tokens
 
     async def on_start(self) -> None:
         self.bus.subscribe(Topics.TRANSCRIPT_FINAL, self._on_transcript)
         self.ctx.store.on_change(self._on_settings_changed)
-        if not self.ctx.settings.openai.configured:
+        if not self.ctx.settings.openai.configured and not self.ctx.settings.anthropic.configured:
             self.log.warning("reasoning_not_configured")
 
     async def on_stop(self) -> None:
         self.cancel_current()
         await self.client.close()
+        await self.advanced.close()
 
     def describe(self) -> str:
-        settings = self.ctx.settings.openai
-        return f"{settings.model}" if settings.configured else "no API key"
+        openai = self.ctx.settings.openai
+        anthropic = self.ctx.settings.anthropic
+        tiers = []
+        if openai.configured:
+            tiers.append(openai.model)
+        if anthropic.configured:
+            tiers.append(f"{anthropic.model} (advanced)")
+        return " + ".join(tiers) if tiers else "no API key"
 
     def _on_settings_changed(self, settings: Any, changed: dict[str, Any]) -> None:
         if any(k.startswith("openai.") for k in changed):
@@ -119,6 +141,44 @@ class Orchestrator(Service):
                 base_url=settings.openai.base_url,
                 timeout=settings.openai.request_timeout,
             )
+        if any(k.startswith("anthropic.") for k in changed):
+            self.advanced.reconfigure(
+                api_key=settings.anthropic.api_key,
+                model=settings.anthropic.model,
+                timeout=settings.anthropic.request_timeout,
+            )
+
+    def _select_backend(self, text: str) -> None:
+        """Pick which reasoning model handles this turn, and raise if none is
+        configured. Sets the per-turn client/model/token-budget the reasoning
+        loop then uses."""
+        openai = self.ctx.settings.openai
+        anthropic = self.ctx.settings.anthropic
+
+        use_advanced = wants_advanced(
+            text, configured=anthropic.configured, auto_route=anthropic.auto_route
+        )
+        # Fall through to the advanced tier for everyday commands too when it is
+        # the only one configured — better than refusing to think at all.
+        if not use_advanced and not openai.configured and anthropic.configured:
+            use_advanced = True
+
+        if use_advanced:
+            self._turn_backend = "advanced"
+            self._turn_client = self.advanced
+            self._turn_model = anthropic.model
+            self._turn_max_tokens = anthropic.max_output_tokens
+        elif openai.configured:
+            self._turn_backend = "basic"
+            self._turn_client = self.client
+            self._turn_model = openai.model
+            self._turn_max_tokens = openai.max_output_tokens
+        else:
+            raise ReasoningUnavailable(
+                "I don't have a reasoning model set up yet. Add an OpenAI or "
+                "Anthropic key in settings and I'll be able to think."
+            )
+        self.log.info("reasoning_backend", backend=self._turn_backend, model=self._turn_model)
 
     # ------------------------------------------------------------------ entry
 
@@ -205,10 +265,8 @@ class Orchestrator(Service):
                 registry.cancel(pending[0])
                 return await self._speak_result("Cancelled.")
 
-        if not self.ctx.settings.openai.configured:
-            raise ReasoningUnavailable(
-                "I don't have an OpenAI key yet. Add one in settings and I'll be able to think."
-            )
+        # Choose the model for this turn (and raise if neither tier is set up).
+        self._select_backend(text)
 
         memory = self.ctx.service("memory")
         memories = facts_for_prompt(await memory.recall(text)) if memory else []
@@ -272,27 +330,39 @@ class Orchestrator(Service):
     async def _call_model(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], *, stream: bool
     ) -> Completion:
-        settings = self.ctx.settings.openai
+        # `_select_backend` has already chosen the client, model and token
+        # budget for this turn. Temperature comes from the OpenAI settings and
+        # is ignored by the Anthropic client (Claude rejects it).
+        client = self._turn_client
+        model = self._turn_model
+        max_tokens = self._turn_max_tokens
+        temperature = self.ctx.settings.openai.temperature
         # Marks the boundary between local work and the network call, so a hang
         # can be attributed to one side or the other from the log alone.
-        self.log.info("reasoning", model=settings.model, tools=len(tools), streaming=stream)
+        self.log.info(
+            "reasoning",
+            model=model,
+            backend=self._turn_backend,
+            tools=len(tools),
+            streaming=stream,
+        )
         if not stream:
-            return await self.client.complete(
+            return await client.complete(
                 messages,
-                model=settings.model,
+                model=model,
                 tools=tools or None,
-                temperature=settings.temperature,
-                max_tokens=settings.max_output_tokens,
+                temperature=temperature,
+                max_tokens=max_tokens,
             )
 
         speaker = _SentenceStreamer(self)
         completion = Completion()
-        async for delta, final in self.client.stream(
+        async for delta, final in client.stream(
             messages,
-            model=settings.model,
+            model=model,
             tools=tools or None,
-            temperature=settings.temperature,
-            max_tokens=settings.max_output_tokens,
+            temperature=temperature,
+            max_tokens=max_tokens,
         ):
             if final is not None:
                 completion = final

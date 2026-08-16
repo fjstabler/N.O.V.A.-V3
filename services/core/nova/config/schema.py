@@ -23,7 +23,7 @@ ComputeDevice = Literal["auto", "cuda", "cpu"]
 
 
 class OpenAISettings(BaseModel):
-    """The single permitted cloud dependency: reasoning only."""
+    """The everyday reasoning tier: OpenAI, for ordinary spoken commands."""
 
     api_key: str = Secret
     model: str = Field(default="gpt-4o", description="Reasoning model")
@@ -33,6 +33,41 @@ class OpenAISettings(BaseModel):
     max_output_tokens: int = Field(default=1024, ge=64, le=16384)
     request_timeout: float = Field(default=60.0, ge=5.0, le=300.0)
     max_tool_iterations: int = Field(default=6, ge=1, le=20)
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_key.strip())
+
+
+class AnthropicSettings(BaseModel):
+    """The advanced reasoning tier: Anthropic's Claude.
+
+    Everyday commands ("turn off the lights", "what's the weather") stay on the
+    OpenAI model above — fast and cheap, and plenty for them. Coding, controlling
+    the machine, and genuinely involved multi-step requests are escalated here,
+    where the stronger model earns the extra latency and cost. The split is
+    deliberately conservative: it only ever escalates when a key is actually
+    configured, so leaving this blank costs nothing — the assistant simply keeps
+    using the OpenAI tier for everything, exactly as it did before.
+    """
+
+    api_key: str = Secret
+    model: str = Field(
+        default="claude-sonnet-5",
+        description="Advanced reasoning model — Claude Sonnet 5 by default",
+    )
+    #: Claude streams to speech, so a generous ceiling is affordable here; the
+    #: model stops when it's done rather than padding to fill it. On Sonnet 5
+    #: this budget also has to cover the model's own reasoning, so it is set a
+    #: little higher than the OpenAI tier's to leave room for both.
+    max_output_tokens: int = Field(default=4096, ge=256, le=32000)
+    request_timeout: float = Field(default=120.0, ge=5.0, le=600.0)
+    auto_route: bool = Field(
+        default=True,
+        description="Automatically send coding, system-control and complex requests to Claude. "
+        "Turn this off to keep everything on the OpenAI model unless you explicitly ask for Claude "
+        "(e.g. 'think hard about this').",
+    )
 
     @property
     def configured(self) -> bool:
@@ -378,6 +413,7 @@ class NovaSettings(BaseModel):
     version: int = 1
     assistant: AssistantSettings = Field(default_factory=AssistantSettings)
     openai: OpenAISettings = Field(default_factory=OpenAISettings)
+    anthropic: AnthropicSettings = Field(default_factory=AnthropicSettings)
     voice: VoiceSettings = Field(default_factory=VoiceSettings)
     appearance: AppearanceSettings = Field(default_factory=AppearanceSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)

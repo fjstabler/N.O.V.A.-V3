@@ -37,7 +37,7 @@ from .voice.service import VoiceService
 
 log = get_logger(__name__)
 
-VERSION = "3.0.0"
+VERSION = "4.0.0"
 
 #: Config sections each integration service reads at start. Editing any of them
 #: restarts that service, so a newly-entered URL or token takes effect without a

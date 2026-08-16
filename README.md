@@ -4,8 +4,11 @@
 interface for a desktop machine.
 
 Voice, memory, system control and home automation all run on your own hardware.
-The only thing that reaches the internet is reasoning, and the only paid
-dependency is an OpenAI API key. Everything else is open source.
+The only thing that reaches the internet is reasoning: everyday commands go to
+OpenAI, while coding, system control and involved requests are routed to
+Anthropic's Claude. An OpenAI key is the only strictly required paid dependency
+— the Anthropic key is optional, and everything falls back to OpenAI without it.
+Everything else is open source.
 
 ---
 
@@ -31,7 +34,7 @@ for reading; this one is for speaking.
 │  services/core     Python                  │
 │                                            │
 │   voice     wake word → STT → TTS          │
-│   ai        OpenAI reasoning + tool loop   │
+│   ai        OpenAI + Claude, tool loop     │
 │   memory    SQLite + FTS5 + embeddings     │
 │   skills    plugin registry                │
 │   system    metrics, Docker, systemd, files│
