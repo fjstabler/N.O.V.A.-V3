@@ -11,6 +11,7 @@ from ...config.schema import Routine, RoutineStep
 from ...integrations.homeassistant import HAEntity, HomeAssistantClient
 from ...integrations.services import HomeService
 from ...memory.models import Entity as MemoryEntity
+from ...runtime import Topics
 from ...runtime.errors import IntegrationError
 from ..base import Param, Skill, tool
 
@@ -165,6 +166,37 @@ class HomeSkill(Skill):
         open_covers = [e for e in entities if e.domain == "cover" and e.state == "open"]
         unlocked = [e for e in entities if e.domain == "lock" and e.state == "unlocked"]
 
+        climate_entities = [
+            e
+            for e in entities
+            if e.domain == "climate" and e.attributes.get("current_temperature") is not None
+        ]
+
+        def bare(items: list[HAEntity]) -> list[dict[str, str]]:
+            return [{"name": e.friendly_name, "detail": ""} for e in items]
+
+        def climate_bits(items: list[HAEntity]) -> list[dict[str, str]]:
+            return [
+                {
+                    "name": e.friendly_name,
+                    "detail": f"{e.attributes['current_temperature']}°",
+                }
+                for e in items
+            ]
+
+        self.ctx.bus.publish(
+            Topics.UI_SURFACE_SHOW,
+            {
+                "kind": "home-overview",
+                "title": "Home overview",
+                "on": bare(on_devices),
+                "climate": climate_bits(climate_entities),
+                "open": bare(open_covers),
+                "unlocked": bare(unlocked),
+            },
+            source=self.name,
+        )
+
         lines: list[str] = []
         if on_devices:
             names = ", ".join(e.friendly_name for e in on_devices[:12])
@@ -172,13 +204,12 @@ class HomeSkill(Skill):
             lines.append(f"{len(on_devices)} on: {names}{more}.")
         else:
             lines.append("Nothing is on.")
-        climate = [
-            f"{e.friendly_name} {e.attributes['current_temperature']}°"
-            for e in entities
-            if e.domain == "climate" and e.attributes.get("current_temperature") is not None
-        ]
-        if climate:
-            lines.append("Climate: " + ", ".join(climate) + ".")
+        if climate_entities:
+            climate_line = ", ".join(
+                f"{e.friendly_name} {e.attributes['current_temperature']}°"
+                for e in climate_entities
+            )
+            lines.append("Climate: " + climate_line + ".")
         if open_covers:
             lines.append("Open: " + ", ".join(e.friendly_name for e in open_covers) + ".")
         if unlocked:

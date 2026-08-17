@@ -13,6 +13,7 @@ from typing import Annotated
 
 from ...integrations.calendar import Event, parse_duration, parse_when
 from ...integrations.services import CalendarService
+from ...runtime import Topics
 from ..base import Param, Skill, tool
 
 
@@ -64,6 +65,7 @@ class CalendarSkill(Skill):
         target, _ = parse_when(when)
         events = await self.calendar.agenda(target)
         label = _day_label(target)
+        self._show_agenda(events, target, days=1, title=f"Agenda — {label}")
         return CalendarService.describe_agenda(events, label)
 
     @tool(
@@ -88,7 +90,48 @@ class CalendarSkill(Skill):
             target, _ = parse_when(start)
         days = max(1, min(days, 31))
         events = await self.calendar.agenda(target, days=days)
+        title = (
+            "This week"
+            if lowered in ("this week", "the week", "week")
+            else "Next week"
+            if lowered == "next week"
+            else f"{days} days from {target.strftime('%a %d %b')}"
+        )
+        self._show_agenda(events, target, days=days, title=title)
         return _describe_week(events, target, days)
+
+    def _show_agenda(self, events: list[Event], start: datetime, *, days: int, title: str) -> None:
+        """Put the agenda on screen alongside the spoken reply."""
+        buckets: dict[str, list[dict[str, object]]] = {}
+        for event in events:
+            key = event.start.date().isoformat()
+            buckets.setdefault(key, []).append(
+                {
+                    "summary": event.summary,
+                    "startsAt": event.starts_at,
+                    "endsAt": event.ends_at,
+                    "allDay": event.all_day,
+                    "location": event.location or "",
+                }
+            )
+        payload_days = []
+        for offset in range(days):
+            day = (start + timedelta(days=offset)).date()
+            payload_days.append(
+                {
+                    "date": day.isoformat(),
+                    "label": day.strftime("%A %d %B"),
+                    "events": sorted(
+                        buckets.get(day.isoformat(), []),
+                        key=lambda item: 0.0 if item["allDay"] else float(item["startsAt"]),
+                    ),
+                }
+            )
+        self.ctx.bus.publish(
+            Topics.UI_SURFACE_SHOW,
+            {"kind": "agenda", "title": title, "days": payload_days},
+            source=self.name,
+        )
 
     @tool("Get the next few upcoming events across all calendars.")
     async def upcoming(self, limit: Annotated[int, Param("How many events")] = 5) -> str:

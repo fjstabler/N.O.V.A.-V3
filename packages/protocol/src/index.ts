@@ -110,9 +110,57 @@ export interface NotificationPayload {
  * `/camera/ha:camera.front_door`); the frontend appends the bridge's own
  * host and token, since the core never puts a secret in a broadcast payload.
  */
+export interface AgendaEventPayload {
+  summary: string;
+  startsAt: number;
+  endsAt: number;
+  allDay: boolean;
+  location?: string;
+}
+export interface AgendaDayPayload {
+  date: string; // YYYY-MM-DD
+  label: string; // "Monday 18 August"
+  events: AgendaEventPayload[];
+}
+export interface WeatherHourPayload {
+  time: string; // ISO
+  temperature: number;
+  precipitation: number;
+  code: number;
+}
+export interface WeatherDayPayload {
+  date: string; // YYYY-MM-DD
+  label: string;
+  high: number;
+  low: number;
+  code: number;
+  precipitation: number;
+}
+export interface HomeOverviewDevicePayload {
+  name: string;
+  detail?: string;
+}
 export type SurfacePayload =
   | { kind: 'map'; title: string; lat: number; lon: number }
-  | { kind: 'camera'; title: string; streamPath: string };
+  | { kind: 'camera'; title: string; streamPath: string }
+  | { kind: 'agenda'; title: string; days: AgendaDayPayload[] }
+  | {
+      kind: 'weather';
+      title: string;
+      place: string;
+      unit: 'C' | 'F';
+      current: { temperature: number; feelsLike?: number; code: number; wind?: number };
+      hours: WeatherHourPayload[];
+      days: WeatherDayPayload[];
+    }
+  | {
+      kind: 'home-overview';
+      title: string;
+      on: HomeOverviewDevicePayload[];
+      climate: HomeOverviewDevicePayload[];
+      open: HomeOverviewDevicePayload[];
+      unlocked: HomeOverviewDevicePayload[];
+    };
 
 export interface ServiceHealthPayload {
   name: string;
