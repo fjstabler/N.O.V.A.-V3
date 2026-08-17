@@ -85,8 +85,15 @@ class CameraSkill(Skill):
         index = self._camera_index(camera_index)
         seconds = max(0.2, min(seconds, 5.0))
         first = await local_camera_pool.read_bgr(index)
-        await asyncio.sleep(seconds)
-        second = await local_camera_pool.read_bgr(index)
+        # Read continuously across the window rather than read → sleep → read.
+        # A webcam keeps buffering while we sleep, so the next read after a pause
+        # returns a stale frame from nearly the same instant as the first, and
+        # real movement is missed. Reading every frame keeps the buffer drained,
+        # so `second` is genuinely ~`seconds` later than `first`.
+        frames = max(2, min(int(seconds * 30), 150))
+        second = first
+        for _ in range(frames):
+            second = await local_camera_pool.read_bgr(index)
         sensitivity = self.ctx.settings.vision.motion_sensitivity
 
         def analyse() -> str | None:

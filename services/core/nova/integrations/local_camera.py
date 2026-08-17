@@ -53,6 +53,12 @@ def _open_camera(index: int) -> Any:
     capture = cv2.VideoCapture(index)
     if not capture.isOpened():
         raise SkillError(f"camera {index} could not be opened")
+    # Keep the driver's queue at one frame so a read returns the *current* image,
+    # not a stale buffered one. Motion detection compares frames seconds apart; a
+    # backlogged buffer makes both come from nearly the same instant and hides the
+    # movement. Best-effort — not every V4L2 backend honours it, which is why the
+    # motion path also drains the buffer itself.
+    capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     # The first frame off a cold sensor is usually black; discard a few. Only
     # needed once, right after opening — a handle that is already streaming
     # does not need this repeated on every subsequent read.

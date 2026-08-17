@@ -120,23 +120,21 @@ async def test_check_for_motion_compares_two_frames(
     ctx: NovaContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ctx.store.patch({"vision": {"camera_enabled": True}}, persist=False)
-    a = frame(0)
-    b = frame(0)
-    b[:12, :, :] = 255
-    frames = iter([a, b])
+    still = frame(50)  # a live (non-black) frame
+    moved = frame(50)
+    moved[:12, :, :] = 255  # a big region lights up
+    calls = {"n": 0}
 
     async def fake_read(index: int) -> Any:
-        return next(frames)
-
-    async def no_sleep(_seconds: float) -> None:
-        return None
+        calls["n"] += 1
+        return still if calls["n"] == 1 else moved
 
     monkeypatch.setattr(camera_module.local_camera_pool, "read_bgr", fake_read)
-    monkeypatch.setattr(camera_module.asyncio, "sleep", no_sleep)
 
     result = await CameraSkill(ctx).check_for_motion(camera_index=0, seconds=1.0)
 
     assert "Motion detected" in result
+    assert calls["n"] > 2  # reads continuously across the window, not just twice
 
 
 # --------------------------------------------------------------- face count
