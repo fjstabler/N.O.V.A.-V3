@@ -21,14 +21,15 @@ class SecuritySkill(Skill):
     description = "Arm or disarm room-watch, and teach it whose face to leave alone."
     category = "Security"
     prompt_hint = (
-        "Any request to WATCH, GUARD, KEEP AN EYE ON, or ALERT ON a room is arm_room_watch, "
-        "never anything else — not display's show_camera (that is a one-off look, not ongoing "
-        "protection), not a home device lookup. This applies even to short, ambiguous phrasing "
-        "like 'watch my room' or 'watch my bedroom' on its own — treat 'watch' aimed at a room "
-        "as this skill's keyword before considering any other tool. Disarm it when asked to "
-        "stand down, or when told someone expected is about to be there. Use learn_face when "
-        "someone says something like 'this is my face' or 'remember what I look like' while "
-        "presumably looking at the camera — that is enrollment, not a request to see anything."
+        "This is the FACE-recognition room-watch: it alerts on faces it does NOT recognise, and "
+        "needs faces enrolled first. Use arm_room_watch only when the user specifically wants "
+        "recognition — 'watch for strangers', 'alert me if someone I don't know comes in', 'tell "
+        "me if it isn't me'. For a plain 'watch my room' / 'keep an eye on my room' / 'tell me if "
+        "someone comes in' with no mention of recognising faces, prefer personwatch's "
+        "arm_person_alarm instead — it needs no setup. Neither is display's show_camera (a one-off "
+        "look, not ongoing protection). Use learn_face when someone says 'this is my face' or "
+        "'remember what I look like' while looking at the camera — that is enrollment, not a "
+        "request to see anything."
     )
 
     @property

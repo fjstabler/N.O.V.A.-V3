@@ -315,6 +315,29 @@ Each degrades on its own: motion needs only NumPy, person detection needs the
 `person` extra, the face count needs OpenCV and the face models — and whichever
 is missing says so plainly rather than failing.
 
+### Person alarm — "tell me if someone comes in"
+
+The continuous version of the above: while armed, N.O.V.A. watches the webcam and
+alerts you the moment a person appears — **spoken if you're home, pushed to your
+phone if you're out**. No faces to enrol; it detects *anyone*, which is exactly
+what "let me know if someone's in my room while I'm out" needs.
+
+- **Arm it by voice**: *"watch my room"*, *"keep an eye on my room"*, *"tell me
+  if anyone comes in"*. Disarm with *"stand down"* / *"stop watching"*. It never
+  runs on its own — the camera light coming on is always a deliberate choice.
+- **Arm it as you leave** an empty room: the first reading is a silent baseline
+  (so it won't alert on you on the way out), then the next person in is the
+  alert. Arming while you're still sitting there just baselines you and waits
+  for someone *else*.
+- Needs the **camera enabled** and the **`person` extra** installed (same one as
+  "is anyone in my room"). Tuning lives under **Person alarm**: poll interval,
+  confirm frames (how many detections before it's sure), and alert cooldown.
+
+It can't tell *who* the person is (no faces), only that someone's there — for
+"alert me only about people I don't recognise", that's the face-based
+**Room-watch** above instead. And set up the phone push under **Notifications**
+so the "you're away" alerts actually reach you.
+
 ### Mobile web client (e.g. an iPhone, over Tailscale)
 
 The bridge that the desktop shell talks to also serves a small, no-build-step

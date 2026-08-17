@@ -25,6 +25,7 @@ from .frigate_watch import FrigateService
 from .integrations.services import CalendarService, HomeLabService, HomeService
 from .memory.service import MemoryService
 from .notifications import NotificationService
+from .personwatch import PersonWatchService
 from .presence import PresenceService
 from .runtime import NovaState, Topics, configure_logging, get_logger
 from .runtime.errors import NovaError
@@ -91,6 +92,7 @@ class NovaApplication:
         register(SecurityService(self.ctx))
         register(PresenceService(self.ctx))
         register(FrigateService(self.ctx))
+        register(PersonWatchService(self.ctx))
         register(SkillRegistry(self.ctx))
         register(Orchestrator(self.ctx))
         register(NotificationService(self.ctx))

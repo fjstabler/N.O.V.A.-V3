@@ -31,6 +31,14 @@ class PersonDetector:
         self.confidence = confidence
         self._model: Any = None
 
+    def ensure_ready(self) -> None:
+        """Load the model now (blocking).
+
+        Called at arm time so a missing dependency surfaces immediately rather
+        than mid-watch, and so the first check isn't slowed by the model load.
+        """
+        self._ensure_model()
+
     def _ensure_model(self) -> Any:
         if self._model is not None:
             return self._model

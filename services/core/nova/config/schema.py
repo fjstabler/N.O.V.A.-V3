@@ -452,6 +452,27 @@ class FrigateSettings(BaseModel):
     alert_cooldown_seconds: float = Field(default=120.0, ge=5.0, le=3600.0)
 
 
+class PersonWatchSettings(BaseModel):
+    """Auto person-alarm: while armed, alert when anyone comes into the camera's view.
+
+    Uses on-device person detection (the `person` extra) — no faces to enrol.
+    Armed and disarmed by voice, never left running by default: it is meant to
+    be turned on when you leave (an empty room, so the first person in is news)
+    and the camera's own light is then a deliberate choice, the same discipline
+    the face-based room-watch keeps.
+    """
+
+    #: How often to check the camera while armed.
+    poll_interval_seconds: float = Field(default=1.5, ge=0.3, le=30.0)
+    #: Consecutive detections required before alerting — one odd frame (a
+    #: reflection, a passing shadow the model misreads) should not be enough.
+    confirm_frames: int = Field(default=2, ge=1, le=10)
+    #: Minimum time between alerts, so one visit does not fire repeatedly.
+    alert_cooldown_seconds: float = Field(default=60.0, ge=5.0, le=3600.0)
+    #: Camera device index; -1 uses the shared Vision → Camera index.
+    camera_index: int = Field(default=-1)
+
+
 class PresenceSettings(BaseModel):
     """Whether N.O.V.A. thinks you are in the room, used to route notifications.
 
@@ -552,6 +573,7 @@ class NovaSettings(BaseModel):
     vision: VisionSettings = Field(default_factory=VisionSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     frigate: FrigateSettings = Field(default_factory=FrigateSettings)
+    personwatch: PersonWatchSettings = Field(default_factory=PersonWatchSettings)
     presence: PresenceSettings = Field(default_factory=PresenceSettings)
     plugins: PluginSettings = Field(default_factory=PluginSettings)
     developer: DeveloperSettings = Field(default_factory=DeveloperSettings)
