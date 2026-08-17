@@ -20,11 +20,19 @@ from __future__ import annotations
 import asyncio
 from typing import Annotated
 
-from ...integrations.detection import MotionDetector
+from ...integrations.detection import MotionDetector, looks_blank
 from ...integrations.local_camera import local_camera_pool
 from ...integrations.person_detect import PersonDetector, describe_people
 from ...runtime.errors import MissingDependency, MissingModel, SkillError
 from ..base import Param, Skill, tool
+
+#: Shown when the camera returns a black frame — the single most common cause of
+#: every camera feature silently failing, and the fix (find the right index).
+_BLANK_CAMERA = (
+    "Camera {index} only gave me a black image, so I can't tell — it's very likely the wrong "
+    "camera. Run `python scripts/probe_cameras.py` to find which index has a live picture, then "
+    "set it in Vision → Camera index."
+)
 
 
 class CameraSkill(Skill):
@@ -56,6 +64,8 @@ class CameraSkill(Skill):
         self._person_detector.confidence = self.ctx.settings.vision.person_confidence
         index = self._camera_index(camera_index)
         frame = await local_camera_pool.read_bgr(index)
+        if await asyncio.to_thread(looks_blank, frame):
+            raise SkillError(_BLANK_CAMERA.format(index=index))
         try:
             confidences = await asyncio.to_thread(self._person_detector.detect, frame)
         except (MissingDependency, MissingModel) as exc:
@@ -77,8 +87,19 @@ class CameraSkill(Skill):
         first = await local_camera_pool.read_bgr(index)
         await asyncio.sleep(seconds)
         second = await local_camera_pool.read_bgr(index)
-        detector = MotionDetector(min_area_fraction=self.ctx.settings.vision.motion_sensitivity)
-        return await asyncio.to_thread(lambda: detector.detect(first, second).describe())
+        sensitivity = self.ctx.settings.vision.motion_sensitivity
+
+        def analyse() -> str | None:
+            # A black-in/black-out pair means the camera, not the room, is the
+            # problem — don't report it as "no movement".
+            if looks_blank(first) and looks_blank(second):
+                return None
+            return MotionDetector(min_area_fraction=sensitivity).detect(first, second).describe()
+
+        outcome = await asyncio.to_thread(analyse)
+        if outcome is None:
+            raise SkillError(_BLANK_CAMERA.format(index=index))
+        return outcome
 
     @tool(
         "Count the people visible on a camera and name any it recognises — the "

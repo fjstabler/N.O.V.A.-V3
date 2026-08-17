@@ -71,7 +71,7 @@ async def test_look_for_people_reports_a_person(
     skill = make_skill(ctx, detector)
 
     async def fake_read(index: int) -> Any:
-        return np.zeros((8, 8, 3), dtype=np.uint8)
+        return np.full((8, 8, 3), 200, dtype=np.uint8)
 
     monkeypatch.setattr(camera_module.local_camera_pool, "read_bgr", fake_read)
 
@@ -87,7 +87,7 @@ async def test_look_for_people_reports_an_empty_room(
     skill = make_skill(ctx, FakePersonDetector([]))
 
     async def fake_read(index: int) -> Any:
-        return np.zeros((8, 8, 3), dtype=np.uint8)
+        return np.full((8, 8, 3), 200, dtype=np.uint8)
 
     monkeypatch.setattr(camera_module.local_camera_pool, "read_bgr", fake_read)
 
@@ -103,7 +103,7 @@ async def test_look_for_people_applies_the_configured_confidence(
     ctx.store.patch({"vision": {"person_confidence": 0.7}}, persist=False)
 
     async def fake_read(index: int) -> Any:
-        return np.zeros((8, 8, 3), dtype=np.uint8)
+        return np.full((8, 8, 3), 200, dtype=np.uint8)
 
     monkeypatch.setattr(camera_module.local_camera_pool, "read_bgr", fake_read)
 
@@ -123,9 +123,24 @@ async def test_look_for_people_degrades_without_the_extra(
     skill = make_skill(ctx, MissingDetector())
 
     async def fake_read(index: int) -> Any:
-        return np.zeros((8, 8, 3), dtype=np.uint8)
+        return np.full((8, 8, 3), 200, dtype=np.uint8)
 
     monkeypatch.setattr(camera_module.local_camera_pool, "read_bgr", fake_read)
 
     with pytest.raises(SkillError, match="ultralytics"):
+        await skill.look_for_people()
+
+
+async def test_look_for_people_flags_a_black_camera(
+    ctx: NovaContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A black frame is the wrong camera index, not an empty room — say so."""
+    skill = make_skill(ctx, FakePersonDetector([0.9]))
+
+    async def fake_read(index: int) -> Any:
+        return np.zeros((8, 8, 3), dtype=np.uint8)  # black
+
+    monkeypatch.setattr(camera_module.local_camera_pool, "read_bgr", fake_read)
+
+    with pytest.raises(SkillError, match="black image"):
         await skill.look_for_people()

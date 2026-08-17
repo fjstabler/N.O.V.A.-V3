@@ -77,6 +77,26 @@ class MotionDetector:
         return arr
 
 
+def mean_brightness(frame: Any) -> float:
+    """Average pixel value (0-255) — how bright the frame is overall."""
+    np = _numpy()
+    arr = np.asarray(frame)
+    if arr.size == 0:
+        return 0.0
+    return float(arr.mean())
+
+
+def looks_blank(frame: Any, *, threshold: float = 8.0) -> bool:
+    """True for a near-black frame.
+
+    Almost always means the camera index is wrong (nothing is actually being
+    captured) or the lens is covered — not that the room is dark. Distinguishing
+    this from real stillness is what stops "no movement" from being a lie when
+    the camera is really returning nothing.
+    """
+    return mean_brightness(frame) < threshold
+
+
 def _numpy() -> Any:
     try:
         import numpy as np

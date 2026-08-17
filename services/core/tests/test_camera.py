@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from nova.context import NovaContext
-from nova.integrations.detection import MotionDetector
+from nova.integrations.detection import MotionDetector, looks_blank, mean_brightness
 from nova.runtime.errors import SkillError
 from nova.runtime.service import Service, ServiceState
 from nova.skills.builtin import camera as camera_module
@@ -71,6 +71,38 @@ def test_greyscale_frames_are_handled() -> None:
     b = np.zeros((10, 10), dtype=np.uint8)
     b[:5, :] = 255
     assert detector.detect(a, b).moved is True
+
+
+# ------------------------------------------------------------- blank frames
+
+
+def test_looks_blank_flags_a_black_frame() -> None:
+    assert looks_blank(frame(0)) is True  # a black frame = wrong index / covered lens
+    assert looks_blank(frame(200)) is False
+
+
+def test_mean_brightness() -> None:
+    assert mean_brightness(frame(255)) == 255.0
+    assert mean_brightness(frame(0)) == 0.0
+
+
+async def test_check_for_motion_flags_a_dead_camera(
+    ctx: NovaContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two black frames is a broken camera, not 'no movement' — surface it."""
+    ctx.store.patch({"vision": {"camera_enabled": True}}, persist=False)
+
+    async def fake_read(index: int) -> Any:
+        return frame(0)  # always black
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(camera_module.local_camera_pool, "read_bgr", fake_read)
+    monkeypatch.setattr(camera_module.asyncio, "sleep", no_sleep)
+
+    with pytest.raises(SkillError, match="black image"):
+        await CameraSkill(ctx).check_for_motion(camera_index=0)
 
 
 # ------------------------------------------------------------------- skill
