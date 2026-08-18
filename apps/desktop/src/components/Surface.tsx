@@ -26,8 +26,11 @@ import { useNova } from '@/state/store';
 
 //: A floor between frames so a very fast local camera cannot spam requests.
 const MIN_FRAME_GAP_MS = 120;
-//: Auto-dismiss so a camera left open does not poll forever after being forgotten.
-const AUTO_DISMISS_MS = 90_000;
+//: Auto-dismiss so a surface never lingers — a glance, not a modal.
+const AUTO_DISMISS_MS = 60_000;
+//: How long the exit animation takes; a hair under the CSS duration so the DOM
+//: is torn down cleanly after the fade finishes.
+const EXIT_MS = 320;
 
 function CameraView({ client, streamPath }: { client: BridgeClient; streamPath: string }): JSX.Element {
   const [src, setSrc] = useState<string | null>(null);
@@ -441,21 +444,44 @@ function HomeOverviewView({
 export function Surface({ client }: { client: BridgeClient | null }): JSX.Element | null {
   const surface = useNova((store) => store.surface);
   const dismissSurface = useNova((store) => store.dismissSurface);
+
+  // The surface is meant to feel like part of N.O.V.A., not a dialog. It sits
+  // off to one side of the Core, has no scrim and no close button, and slips
+  // away on its own after AUTO_DISMISS_MS. We hold onto the last payload for a
+  // moment past dismissal so the exit animation has something to render.
+  const [displayed, setDisplayed] = useState<typeof surface>(null);
+  const [phase, setPhase] = useState<'in' | 'out'>('in');
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const exitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!surface) return undefined;
-    pulseCore(0.5);
-    dismissTimer.current = setTimeout(dismissSurface, AUTO_DISMISS_MS);
+    if (dismissTimer.current) clearTimeout(dismissTimer.current);
+    if (exitTimer.current) clearTimeout(exitTimer.current);
+
+    if (surface) {
+      // A new (or replacement) surface — show it and re-arm the auto-dismiss.
+      setDisplayed(surface);
+      setPhase('in');
+      pulseCore(0.5);
+      dismissTimer.current = setTimeout(dismissSurface, AUTO_DISMISS_MS);
+    } else if (displayed) {
+      // Store cleared: play the exit, then unmount.
+      setPhase('out');
+      exitTimer.current = setTimeout(() => setDisplayed(null), EXIT_MS);
+    }
     return () => {
       if (dismissTimer.current) clearTimeout(dismissTimer.current);
+      if (exitTimer.current) clearTimeout(exitTimer.current);
     };
+    // `displayed` is deliberately excluded — including it would restart the
+    // exit timer as soon as it clears itself.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [surface, dismissSurface]);
 
-  // Escape closes the surface first, before it falls through to whatever
-  // App.tsx's own Escape handler does (voice-cancel).
+  // Escape still dismisses early — no visible close button, but the keyboard
+  // escape hatch stays. Stops the App-level Escape (voice-cancel) firing too.
   useEffect(() => {
-    if (!surface) return undefined;
+    if (!displayed) return undefined;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.stopPropagation();
@@ -464,30 +490,25 @@ export function Surface({ client }: { client: BridgeClient | null }): JSX.Elemen
     };
     window.addEventListener('keydown', onKey, { capture: true });
     return () => window.removeEventListener('keydown', onKey, { capture: true });
-  }, [surface, dismissSurface]);
+  }, [displayed, dismissSurface]);
 
-  if (!surface || !client) return null;
+  if (!displayed || !client) return null;
 
   return (
-    <div className="surface" role="dialog" aria-label={surface.title}>
+    <aside
+      className={`surface surface--is-${phase}`}
+      role="status"
+      aria-live="polite"
+      aria-label={displayed.title}
+    >
       <div className="surface__card">
         <header className="surface__bar">
-          <h2 className="surface__title">{surface.title}</h2>
-          <button
-            type="button"
-            className="surface__close"
-            onClick={dismissSurface}
-            aria-label="Close"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 6l12 12M18 6L6 18" />
-            </svg>
-          </button>
+          <h2 className="surface__title">{displayed.title}</h2>
         </header>
 
-        {renderSurface(surface, client)}
+        {renderSurface(displayed, client)}
       </div>
-    </div>
+    </aside>
   );
 }
 
