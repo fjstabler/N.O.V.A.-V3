@@ -94,7 +94,11 @@ async def test_home_overview_publishes_a_surface(ctx: NovaContext) -> None:
         HAEntity(
             entity_id="light.kitchen",
             state="on",
-            attributes={"friendly_name": "Kitchen Light", "area": "Kitchen"},
+            attributes={
+                "friendly_name": "Kitchen Light",
+                "area": "Kitchen",
+                "brightness": 128,
+            },
         ),
         HAEntity(
             entity_id="climate.hallway",
@@ -106,18 +110,56 @@ async def test_home_overview_publishes_a_surface(ctx: NovaContext) -> None:
             state="unlocked",
             attributes={"friendly_name": "Front Door"},
         ),
+        HAEntity(
+            entity_id="camera.doorbell",
+            state="idle",
+            attributes={"friendly_name": "Doorbell"},
+        ),
+        # Two intentionally-not-on entities: a motion sensor reading "on" and a
+        # media player in standby — both would have been wrongly counted before.
+        HAEntity(
+            entity_id="binary_sensor.hall_motion",
+            state="on",
+            attributes={"friendly_name": "Hall motion", "device_class": "motion"},
+        ),
+        HAEntity(
+            entity_id="media_player.tv",
+            state="standby",
+            attributes={"friendly_name": "TV"},
+        ),
     )
     events = captured(ctx)
 
     reply = await HomeSkill(ctx).home_overview()
 
-    assert "on" in reply.lower()  # still spoken
+    assert "1 on" in reply  # only the light — not the motion sensor, not the standby TV
     assert len(events) == 1
     payload = events[0]
     assert payload["kind"] == "home-overview"
-    assert [d["name"] for d in payload["on"]] == ["Kitchen Light"]
+    on_names = [d["name"] for d in payload["on"]]
+    assert on_names == ["Kitchen Light"]
+    assert payload["on"][0]["domain"] == "light"
+    assert payload["on"][0]["area"] == "Kitchen"
+    assert payload["on"][0]["detail"] == "50%"  # brightness rendered as percent
     assert payload["climate"][0]["detail"] == "19.5°"
     assert payload["unlocked"][0]["name"] == "Front Door"
+    assert payload["cameras"][0]["streamPath"] == "/camera/ha:camera.doorbell"
+
+
+async def test_media_player_playing_counts_as_on(ctx: NovaContext) -> None:
+    home_with(
+        ctx,
+        HAEntity(
+            entity_id="media_player.tv",
+            state="playing",
+            attributes={"friendly_name": "TV", "media_title": "The News"},
+        ),
+    )
+    events = captured(ctx)
+    await HomeSkill(ctx).home_overview()
+    on = events[0]["on"]
+    assert [d["name"] for d in on] == ["TV"]
+    assert on[0]["detail"] == "The News"
 
 
 # --------------------------------------------------------------- weather

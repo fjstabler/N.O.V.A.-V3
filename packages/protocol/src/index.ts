@@ -138,7 +138,15 @@ export interface WeatherDayPayload {
 }
 export interface HomeOverviewDevicePayload {
   name: string;
+  /** HA domain — used to pick the right icon in the UI. */
+  domain?: string;
+  area?: string;
   detail?: string;
+}
+
+export interface HomeOverviewCameraPayload {
+  name: string;
+  streamPath: string;
 }
 export type SurfacePayload =
   | { kind: 'map'; title: string; lat: number; lon: number }
@@ -160,6 +168,7 @@ export type SurfacePayload =
       climate: HomeOverviewDevicePayload[];
       open: HomeOverviewDevicePayload[];
       unlocked: HomeOverviewDevicePayload[];
+      cameras: HomeOverviewCameraPayload[];
     };
 
 export interface ServiceHealthPayload {

@@ -158,11 +158,7 @@ class HomeSkill(Skill):
     async def home_overview(self) -> str:
         client = self.home.require_ha()
         entities = client.entities()
-        on_devices = [
-            e
-            for e in entities
-            if e.domain in ("light", "switch", "fan", "media_player") and e.state == "on"
-        ]
+        on_devices = [e for e in entities if _is_actually_on(e)]
         open_covers = [e for e in entities if e.domain == "cover" and e.state == "open"]
         unlocked = [e for e in entities if e.domain == "lock" and e.state == "unlocked"]
 
@@ -171,28 +167,34 @@ class HomeSkill(Skill):
             for e in entities
             if e.domain == "climate" and e.attributes.get("current_temperature") is not None
         ]
+        cameras = [e for e in entities if e.domain == "camera"][:4]
 
-        def bare(items: list[HAEntity]) -> list[dict[str, str]]:
-            return [{"name": e.friendly_name, "detail": ""} for e in items]
-
-        def climate_bits(items: list[HAEntity]) -> list[dict[str, str]]:
-            return [
-                {
-                    "name": e.friendly_name,
-                    "detail": f"{e.attributes['current_temperature']}°",
-                }
-                for e in items
-            ]
+        def as_item(entity: HAEntity, detail: str = "") -> dict[str, str]:
+            return {
+                "name": entity.friendly_name,
+                "domain": entity.domain,
+                "area": entity.area,
+                "detail": detail,
+            }
 
         self.ctx.bus.publish(
             Topics.UI_SURFACE_SHOW,
             {
                 "kind": "home-overview",
                 "title": "Home overview",
-                "on": bare(on_devices),
-                "climate": climate_bits(climate_entities),
-                "open": bare(open_covers),
-                "unlocked": bare(unlocked),
+                "on": [as_item(e, _on_detail(e)) for e in on_devices],
+                "climate": [
+                    as_item(e, f"{e.attributes['current_temperature']}°") for e in climate_entities
+                ],
+                "open": [as_item(e) for e in open_covers],
+                "unlocked": [as_item(e) for e in unlocked],
+                "cameras": [
+                    {
+                        "name": e.friendly_name,
+                        "streamPath": f"/camera/ha:{e.entity_id}",
+                    }
+                    for e in cameras
+                ],
             },
             source=self.name,
         )
@@ -602,3 +604,36 @@ def _to_float(value: str, default: float) -> float:
         return float(allowed)
     except ValueError:
         return default
+
+
+#: States that mean "on" for media_player. HA reports "on"/"playing"/"paused"
+#: for one that is doing something; "standby", "idle" and "off" don't count.
+_MEDIA_PLAYER_ON = frozenset({"on", "playing", "paused"})
+
+
+def _is_actually_on(entity: HAEntity) -> bool:
+    """Whether an entity counts as *on* for the home overview.
+
+    Sensors and binary_sensors are excluded outright — a motion sensor showing
+    "on" (movement) or a connectivity sensor showing "on" (connected) is not what
+    "what's on" means. media_player must be actively playing/paused, not standby.
+    """
+    if entity.domain == "media_player":
+        return entity.state in _MEDIA_PLAYER_ON
+    if entity.domain in ("light", "switch", "fan"):
+        return entity.state == "on"
+    return False
+
+
+def _on_detail(entity: HAEntity) -> str:
+    """A short badge for an "on" device — brightness, media title, etc."""
+    if entity.domain == "light":
+        brightness = entity.attributes.get("brightness")
+        if brightness is not None:
+            return f"{round(int(brightness) / 255 * 100)}%"
+    if entity.domain == "media_player":
+        title = entity.attributes.get("media_title")
+        if title:
+            return str(title)[:40]
+        return entity.state  # playing / paused
+    return ""

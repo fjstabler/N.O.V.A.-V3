@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   AgendaDayPayload,
   AgendaEventPayload,
+  HomeOverviewCameraPayload,
   HomeOverviewDevicePayload,
   WeatherDayPayload,
   WeatherHourPayload,
@@ -79,7 +80,91 @@ function formatEventTime(event: AgendaEventPayload): string {
   return end.getTime() > start.getTime() ? `${fmt(start)} – ${fmt(end)}` : fmt(start);
 }
 
+/** Turn HH:MM (24h) into a fractional-hour position on the day column. */
+function hourFraction(seconds: number): number {
+  const d = new Date(seconds * 1000);
+  return d.getHours() + d.getMinutes() / 60;
+}
+
+/** A palette so each event gets a stable, distinguishable colour. */
+const EVENT_COLOURS = ['#5aa8ff', '#7ed48b', '#ffb86b', '#c99cff', '#ff8fa3', '#5be3d3', '#f6d167'];
+function colourFor(summary: string): string {
+  let hash = 0;
+  for (const ch of summary) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return EVENT_COLOURS[hash % EVENT_COLOURS.length] ?? '#5aa8ff';
+}
+
 function AgendaView({ days }: { days: AgendaDayPayload[] }): JSX.Element {
+  // If it's a single day, the strip is overkill — fall back to the tidy list.
+  if (days.length <= 1) {
+    return <AgendaList days={days} />;
+  }
+  const isToday = (iso: string) => iso === new Date().toISOString().slice(0, 10);
+  const HOURS = [6, 9, 12, 15, 18, 21]; // grid rows
+  const startHour = 6;
+  const endHour = 24;
+  const totalHours = endHour - startHour;
+  return (
+    <div className="surface__week">
+      <div className="week__hours" aria-hidden="true">
+        {HOURS.map((h) => (
+          <div key={h} className="week__hour-label" style={{ top: `${((h - startHour) / totalHours) * 100}%` }}>
+            {String(h).padStart(2, '0')}:00
+          </div>
+        ))}
+      </div>
+      <div className="week__columns">
+        {days.map((day) => (
+          <div key={day.date} className={`week__col${isToday(day.date) ? ' is-today' : ''}`}>
+            <div className="week__col-head">
+              <div className="week__dow">{day.label.split(' ')[0] ?? ''}</div>
+              <div className="week__date">{day.label.split(' ').slice(1).join(' ')}</div>
+            </div>
+            <div className="week__col-body">
+              {HOURS.map((h) => (
+                <div
+                  key={h}
+                  className="week__gridline"
+                  style={{ top: `${((h - startHour) / totalHours) * 100}%` }}
+                />
+              ))}
+              {day.events.map((event, index) => {
+                if (event.allDay) {
+                  return (
+                    <div key={index} className="week__all-day" style={{ background: colourFor(event.summary) }}>
+                      {event.summary}
+                    </div>
+                  );
+                }
+                const start = Math.max(startHour, hourFraction(event.startsAt));
+                const end = Math.max(start + 0.5, hourFraction(event.endsAt));
+                const top = ((start - startHour) / totalHours) * 100;
+                const height = ((end - start) / totalHours) * 100;
+                return (
+                  <div
+                    key={index}
+                    className="week__event"
+                    style={{
+                      top: `${top}%`,
+                      height: `${height}%`,
+                      background: colourFor(event.summary),
+                    }}
+                    title={`${event.summary}${event.location ? ` · ${event.location}` : ''}`}
+                  >
+                    <div className="week__event-title">{event.summary}</div>
+                    <div className="week__event-time">{formatEventTime(event)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AgendaList({ days }: { days: AgendaDayPayload[] }): JSX.Element {
   return (
     <div className="surface__agenda">
       {days.map((day) => (
@@ -91,6 +176,11 @@ function AgendaView({ days }: { days: AgendaDayPayload[] }): JSX.Element {
             <ul className="agenda-day__list">
               {day.events.map((event, index) => (
                 <li key={`${day.date}-${index}`} className="agenda-event">
+                  <span
+                    className="agenda-event__swatch"
+                    style={{ background: colourFor(event.summary) }}
+                    aria-hidden="true"
+                  />
                   <span className="agenda-event__time">{formatEventTime(event)}</span>
                   <span className="agenda-event__title">{event.summary}</span>
                   {event.location && (
@@ -197,51 +287,151 @@ function WeatherView({
 
 // ------------------------------------------------------------ overview
 
-function OverviewGroup({
-  heading,
-  items,
-}: {
-  heading: string;
-  items: HomeOverviewDevicePayload[];
-}): JSX.Element | null {
-  if (items.length === 0) return null;
+/** Emoji glyph per HA domain — the surface reads at a glance. */
+const DOMAIN_ICONS: Record<string, string> = {
+  light: '💡',
+  switch: '🔌',
+  fan: '🌀',
+  media_player: '🔊',
+  climate: '🌡',
+  cover: '🪟',
+  lock: '🔒',
+  camera: '📷',
+};
+const iconFor = (domain?: string) => (domain && DOMAIN_ICONS[domain]) || '•';
+
+interface DeviceTileProps {
+  item: HomeOverviewDevicePayload;
+  tone?: 'on' | 'warn';
+}
+function DeviceTile({ item, tone = 'on' }: DeviceTileProps): JSX.Element {
   return (
-    <section className="overview-group">
-      <h3 className="overview-group__heading">{heading}</h3>
-      <ul className="overview-group__list">
-        {items.map((item, index) => (
-          <li key={`${heading}-${index}`} className="overview-group__item">
-            <span className="overview-group__name">{item.name}</span>
-            {item.detail && <span className="overview-group__detail">{item.detail}</span>}
-          </li>
-        ))}
-      </ul>
-    </section>
+    <div className={`device-tile device-tile--${tone}`}>
+      <span className="device-tile__icon" aria-hidden="true">
+        {iconFor(item.domain)}
+      </span>
+      <div className="device-tile__body">
+        <div className="device-tile__name">{item.name}</div>
+        {(item.area || item.detail) && (
+          <div className="device-tile__meta">
+            {item.area}
+            {item.area && item.detail ? ' · ' : ''}
+            {item.detail}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function groupByRoom(items: HomeOverviewDevicePayload[]): [string, HomeOverviewDevicePayload[]][] {
+  const rooms = new Map<string, HomeOverviewDevicePayload[]>();
+  for (const item of items) {
+    const key = item.area || 'Elsewhere';
+    if (!rooms.has(key)) rooms.set(key, []);
+    rooms.get(key)!.push(item);
+  }
+  return Array.from(rooms.entries()).sort(([a], [b]) => a.localeCompare(b));
+}
+
+function CameraThumb({
+  client,
+  camera,
+}: {
+  client: BridgeClient;
+  camera: HomeOverviewCameraPayload;
+}): JSX.Element {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    const url = client.resourceUrl(camera.streamPath);
+    if (url) setSrc(`${url}&t=${Date.now()}`);
+    // Refresh once every 5s — this is a thumbnail, not a live feed.
+    const timer = setInterval(() => {
+      const next = client.resourceUrl(camera.streamPath);
+      if (next) setSrc(`${next}&t=${Date.now()}`);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [client, camera.streamPath]);
+  return (
+    <figure className="camera-thumb">
+      {src ? <img src={src} alt="" /> : <div className="camera-thumb__loading">·</div>}
+      <figcaption>
+        <span aria-hidden="true">📷</span> {camera.name}
+      </figcaption>
+    </figure>
   );
 }
 
 function HomeOverviewView({
+  client,
   on,
   climate,
   open,
   unlocked,
+  cameras,
 }: {
+  client: BridgeClient;
   on: HomeOverviewDevicePayload[];
   climate: HomeOverviewDevicePayload[];
   open: HomeOverviewDevicePayload[];
   unlocked: HomeOverviewDevicePayload[];
+  cameras: HomeOverviewCameraPayload[];
 }): JSX.Element {
-  const empty = on.length + climate.length + open.length + unlocked.length === 0;
+  const empty =
+    on.length + climate.length + open.length + unlocked.length + cameras.length === 0;
   return (
     <div className="surface__overview">
       {empty ? (
-        <p className="overview-empty">Nothing on. The house is quiet.</p>
+        <p className="overview-empty">The house is quiet — nothing on, everything closed.</p>
       ) : (
         <>
-          <OverviewGroup heading={`On (${on.length})`} items={on} />
-          <OverviewGroup heading="Climate" items={climate} />
-          <OverviewGroup heading="Open" items={open} />
-          <OverviewGroup heading="Unlocked" items={unlocked} />
+          {(open.length > 0 || unlocked.length > 0) && (
+            <section className="overview-alert">
+              <h3 className="overview-alert__heading">Worth checking</h3>
+              <div className="overview-tiles">
+                {open.map((item, i) => <DeviceTile key={`open-${i}`} item={item} tone="warn" />)}
+                {unlocked.map((item, i) => <DeviceTile key={`lock-${i}`} item={item} tone="warn" />)}
+              </div>
+            </section>
+          )}
+          {on.length > 0 && (
+            <section>
+              <h3 className="overview-heading">
+                On <span className="overview-count">{on.length}</span>
+              </h3>
+              {groupByRoom(on).map(([room, items]) => (
+                <div key={room} className="overview-room">
+                  <div className="overview-room__label">{room}</div>
+                  <div className="overview-tiles">
+                    {items.map((item, i) => <DeviceTile key={`${room}-${i}`} item={item} />)}
+                  </div>
+                </div>
+              ))}
+            </section>
+          )}
+          {climate.length > 0 && (
+            <section>
+              <h3 className="overview-heading">Climate</h3>
+              <div className="overview-tiles">
+                {climate.map((item, i) => (
+                  <DeviceTile key={`c-${i}`} item={{ ...item, domain: 'climate' }} />
+                ))}
+              </div>
+            </section>
+          )}
+          {cameras.length > 0 && (
+            <section>
+              <h3 className="overview-heading">Cameras</h3>
+              <div className="overview-cameras">
+                {cameras.map((camera) => (
+                  <CameraThumb key={camera.streamPath} client={client} camera={camera} />
+                ))}
+              </div>
+            </section>
+          )}
+          {on.length === 0 && climate.length === 0 && cameras.length === 0 && (
+            <p className="overview-empty">Nothing on right now.</p>
+          )}
         </>
       )}
     </div>
@@ -325,10 +515,12 @@ function renderSurface(
     case 'home-overview':
       return (
         <HomeOverviewView
+          client={client}
           on={surface.on}
           climate={surface.climate}
           open={surface.open}
           unlocked={surface.unlocked}
+          cameras={surface.cameras}
         />
       );
   }
