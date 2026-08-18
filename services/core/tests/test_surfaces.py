@@ -241,3 +241,102 @@ async def test_get_weather_speaks_and_publishes(
     assert payload["current"]["temperature"] == 12.0
     assert len(payload["days"]) == 3
     assert 1 <= len(payload["hours"]) <= 12
+
+
+# ------------------------------------------------------------- system rings
+
+from types import SimpleNamespace  # noqa: E402 — grouped with the block that uses it
+
+from nova.skills.builtin.server import _build_system_rings  # noqa: E402
+
+
+def _fake_metrics(**over: Any) -> SimpleNamespace:
+    defaults: dict[str, Any] = {
+        "cpu_percent": 12.0,
+        "memory_percent": 47.0,
+        "memory_used_gb": 7.5,
+        "memory_total_gb": 16.0,
+        "temperatures": {"Package id 0": 58.0, "Core 0": 55.0},
+        "disks": [SimpleNamespace(mountpoint="/", total_gb=500.0, used_gb=200.0, percent=40.0)],
+    }
+    defaults.update(over)
+    return SimpleNamespace(**defaults)
+
+
+def test_system_rings_shape() -> None:
+    rings = _build_system_rings(_fake_metrics())
+    labels = [r["label"] for r in rings]
+    assert labels == ["CPU temp", "RAM", "Disk free"]
+    # Each ring carries a formatted value and a 0..1 fraction.
+    for ring in rings:
+        assert isinstance(ring["value"], str) and ring["value"]
+        assert 0.0 <= float(ring["fraction"]) <= 1.0
+        assert ring["tone"] in {"ok", "warn", "critical"}
+
+
+def test_system_rings_cpu_temp_scales_and_tones() -> None:
+    ok = _build_system_rings(_fake_metrics(temperatures={"cpu": 50.0}))[0]
+    warn = _build_system_rings(_fake_metrics(temperatures={"cpu": 78.0}))[0]
+    hot = _build_system_rings(_fake_metrics(temperatures={"cpu": 92.0}))[0]
+    assert ok["value"] == "50°C" and ok["tone"] == "ok"
+    assert warn["tone"] == "warn"
+    assert hot["tone"] == "critical"
+    # 30° maps to 0.0, 90° to 1.0
+    assert 0.0 < ok["fraction"] < 1.0
+    assert hot["fraction"] == 1.0
+
+
+def test_system_rings_fall_back_to_cpu_load_without_temps() -> None:
+    ring = _build_system_rings(_fake_metrics(temperatures={}, cpu_percent=42.0))[0]
+    assert ring["label"] == "CPU load"
+    assert ring["value"] == "42%"
+
+
+def test_system_rings_disk_shows_free_pct_and_gb() -> None:
+    disk = SimpleNamespace(mountpoint="/", total_gb=1000.0, used_gb=900.0, percent=90.0)
+    ring = _build_system_rings(_fake_metrics(disks=[disk]))[2]
+    assert ring["value"] == "10%"  # free
+    assert ring["fraction"] == 0.9  # arc shows what's used
+    assert "100 GB free" in ring["caption"]
+    assert ring["tone"] == "warn"  # 90% used is worrying; 92%+ escalates to critical
+
+    critical = SimpleNamespace(mountpoint="/", total_gb=1000.0, used_gb=950.0, percent=95.0)
+    ring = _build_system_rings(_fake_metrics(disks=[critical]))[2]
+    assert ring["tone"] == "critical"
+
+
+def test_system_rings_disk_picks_the_largest_mount() -> None:
+    small = SimpleNamespace(mountpoint="/boot", total_gb=1.0, used_gb=0.5, percent=50.0)
+    big = SimpleNamespace(mountpoint="/", total_gb=500.0, used_gb=100.0, percent=20.0)
+    ring = _build_system_rings(_fake_metrics(disks=[small, big]))[2]
+    assert "500" in ring["caption"]  # picked / not /boot
+
+
+async def test_system_rings_tool_publishes_a_surface(
+    ctx: NovaContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tool speaks a short line AND publishes a system-stats surface."""
+    from nova.runtime.service import ServiceState
+    from nova.skills.builtin.server import ServerSkill
+    from nova.system.service import SystemService
+
+    ctx.store.patch({"server": {"enabled": True}}, persist=False)
+    system = SystemService(ctx)
+    ctx.services.register(system)
+    system._set_state(ServiceState.RUNNING)
+
+    fake = _fake_metrics()
+
+    async def fake_current_metrics() -> Any:
+        return fake
+
+    monkeypatch.setattr(system, "current_metrics", fake_current_metrics)
+    events = captured(ctx)
+
+    reply = await ServerSkill(ctx).system_rings()
+
+    assert "CPU" in reply and "RAM" in reply and "Disk" in reply
+    assert len(events) == 1
+    payload = events[0]
+    assert payload["kind"] == "system-stats"
+    assert len(payload["rings"]) == 3

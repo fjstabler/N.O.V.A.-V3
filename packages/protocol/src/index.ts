@@ -148,6 +148,20 @@ export interface HomeOverviewCameraPayload {
   name: string;
   streamPath: string;
 }
+
+/** One dial on the system-stats surface. */
+export interface SystemRingPayload {
+  /** Short label under the ring (e.g. "CPU"). */
+  label: string;
+  /** The number shown in the middle of the ring, already formatted. */
+  value: string;
+  /** 0..1 — how much of the ring is filled. */
+  fraction: number;
+  /** Optional smaller line under the value, e.g. "of 1TB free". */
+  caption?: string;
+  /** Optional tone, so warning states get a warmer colour. */
+  tone?: 'ok' | 'warn' | 'critical';
+}
 export type SurfacePayload =
   | { kind: 'map'; title: string; lat: number; lon: number }
   | { kind: 'camera'; title: string; streamPath: string }
@@ -169,6 +183,11 @@ export type SurfacePayload =
       open: HomeOverviewDevicePayload[];
       unlocked: HomeOverviewDevicePayload[];
       cameras: HomeOverviewCameraPayload[];
+    }
+  | {
+      kind: 'system-stats';
+      title: string;
+      rings: SystemRingPayload[];
     };
 
 export interface ServiceHealthPayload {

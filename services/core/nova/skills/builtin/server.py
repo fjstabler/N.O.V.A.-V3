@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
+from ...runtime import Topics
 from ...runtime.errors import PermissionDenied, SkillError
 from ...system.metrics import format_bytes, format_duration
 from ...system.service import SystemService
@@ -52,6 +53,23 @@ class ServerSkill(Skill):
             f"{host.hostname} ({host.cpu_model}, {host.logical_cores} cores)" if host else "server"
         )
         return f"{header}. {metrics.summary()}."
+
+    @tool(
+        "Show CPU temperature, RAM usage and disk usage as three live rings on screen. "
+        "Use for 'how's my system', 'what are the system stats', 'CPU temperature', 'RAM usage', "
+        "'how much storage is left', 'show the system'. The spoken reply is short — the picture "
+        "on screen carries the numbers."
+    )
+    async def system_rings(self) -> str:
+        metrics = await self.system.current_metrics()
+        rings = _build_system_rings(metrics)
+        self.ctx.bus.publish(
+            Topics.UI_SURFACE_SHOW,
+            {"kind": "system-stats", "title": "System", "rings": rings},
+            source=self.name,
+        )
+        # Spoken form: a single readable sentence, the surface carries the detail.
+        return ", ".join(f"{r['label']} {r['value']}" for r in rings) + "."
 
     @tool("Get detailed disk usage for every mounted filesystem.")
     async def disk_usage(self) -> str:
@@ -331,3 +349,80 @@ class ServerSkill(Skill):
             )
         result = await self.system.runner.run(command)
         return result.summarise()
+
+
+def _build_system_rings(metrics: object) -> list[dict[str, object]]:
+    """Turn a Metrics snapshot into the three rings the system-stats surface shows.
+
+    Each ring carries a formatted centre value, a 0..1 fraction for the arc, and a
+    tone (warn/critical) once it crosses conservative thresholds so the frontend
+    can colour it. Kept pure so it is testable without a psutil sample.
+    """
+    m = metrics  # a nova.system.metrics.Metrics, but duck-typed for testability
+
+    # CPU temp — take the hottest sensor. Falls back to CPU % if none, so the
+    # ring is never empty (some machines / VMs report no temperature at all).
+    temps = getattr(m, "temperatures", {}) or {}
+    if temps:
+        temp = max(temps.values())
+        cpu_ring = {
+            "label": "CPU temp",
+            "value": f"{round(temp)}°C",
+            # 30° → empty, 90° → full; typical laptops idle ~40, throttle ~95.
+            "fraction": max(0.0, min(1.0, (temp - 30.0) / 60.0)),
+            "caption": _hottest_label(temps),
+            "tone": "critical" if temp >= 85 else "warn" if temp >= 75 else "ok",
+        }
+    else:
+        cpu_pct = float(getattr(m, "cpu_percent", 0.0))
+        cpu_ring = {
+            "label": "CPU load",
+            "value": f"{round(cpu_pct)}%",
+            "fraction": max(0.0, min(1.0, cpu_pct / 100.0)),
+            "caption": "no temperature sensor",
+            "tone": "critical" if cpu_pct >= 90 else "warn" if cpu_pct >= 75 else "ok",
+        }
+
+    # RAM %.
+    ram_pct = float(getattr(m, "memory_percent", 0.0))
+    used = float(getattr(m, "memory_used_gb", 0.0))
+    total = float(getattr(m, "memory_total_gb", 0.0))
+    ram_ring = {
+        "label": "RAM",
+        "value": f"{round(ram_pct)}%",
+        "fraction": max(0.0, min(1.0, ram_pct / 100.0)),
+        "caption": f"{used:.1f} of {total:.0f} GB" if total > 0 else "",
+        "tone": "critical" if ram_pct >= 92 else "warn" if ram_pct >= 80 else "ok",
+    }
+
+    # Disk — the largest mount; usually / on a desktop machine.
+    disks = getattr(m, "disks", []) or []
+    if disks:
+        disk = max(disks, key=lambda d: getattr(d, "total_gb", 0.0))
+        free_gb = float(getattr(disk, "total_gb", 0.0)) - float(getattr(disk, "used_gb", 0.0))
+        used_pct = float(getattr(disk, "percent", 0.0))
+        free_pct = max(0.0, 100.0 - used_pct)
+        disk_ring = {
+            "label": "Disk free",
+            # Free is the useful number for "storage remaining", the ring shows
+            # what's used so a nearly-full disk looks visibly full.
+            "value": f"{round(free_pct)}%",
+            "fraction": max(0.0, min(1.0, used_pct / 100.0)),
+            "caption": f"{free_gb:.0f} GB free of {getattr(disk, 'total_gb', 0.0):.0f}",
+            "tone": "critical" if used_pct >= 92 else "warn" if used_pct >= 85 else "ok",
+        }
+    else:
+        disk_ring = {
+            "label": "Disk free",
+            "value": "—",
+            "fraction": 0.0,
+            "caption": "no disk reported",
+            "tone": "ok",
+        }
+
+    return [cpu_ring, ram_ring, disk_ring]
+
+
+def _hottest_label(temps: dict[str, float]) -> str:
+    hottest = max(temps.items(), key=lambda kv: kv[1])
+    return hottest[0]

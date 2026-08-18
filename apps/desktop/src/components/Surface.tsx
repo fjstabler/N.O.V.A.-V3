@@ -17,6 +17,7 @@ import type {
   AgendaEventPayload,
   HomeOverviewCameraPayload,
   HomeOverviewDevicePayload,
+  SystemRingPayload,
   WeatherDayPayload,
   WeatherHourPayload,
 } from '@protocol';
@@ -31,6 +32,18 @@ const AUTO_DISMISS_MS = 60_000;
 //: How long the exit animation takes; a hair under the CSS duration so the DOM
 //: is torn down cleanly after the fade finishes.
 const EXIT_MS = 320;
+
+/*
+ * Where the panel lands. The Core sits centred and takes roughly the middle
+ * ~60% of the screen, so these four slots hug the corners and mid-right — none
+ * of them cover it. Every arriving surface takes the next slot in the cycle,
+ * so calling three things in a row lights up three different spots instead of
+ * always the right-middle.
+ *
+ * Top-left is deliberately not in the rotation: the clock lives there.
+ */
+type SurfaceSlot = 'top-right' | 'bottom-left' | 'right-mid' | 'bottom-right';
+const SLOT_CYCLE: SurfaceSlot[] = ['top-right', 'bottom-left', 'right-mid', 'bottom-right'];
 
 function CameraView({ client, streamPath }: { client: BridgeClient; streamPath: string }): JSX.Element {
   const [src, setSrc] = useState<string | null>(null);
@@ -451,6 +464,8 @@ export function Surface({ client }: { client: BridgeClient | null }): JSX.Elemen
   // moment past dismissal so the exit animation has something to render.
   const [displayed, setDisplayed] = useState<typeof surface>(null);
   const [phase, setPhase] = useState<'in' | 'out'>('in');
+  const [slot, setSlot] = useState<SurfaceSlot>('top-right');
+  const slotIndex = useRef(0);
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const exitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -459,8 +474,11 @@ export function Surface({ client }: { client: BridgeClient | null }): JSX.Elemen
     if (exitTimer.current) clearTimeout(exitTimer.current);
 
     if (surface) {
-      // A new (or replacement) surface — show it and re-arm the auto-dismiss.
+      // A new (or replacement) surface — show it, pick the next slot, and
+      // re-arm the auto-dismiss.
       setDisplayed(surface);
+      setSlot(SLOT_CYCLE[slotIndex.current % SLOT_CYCLE.length] ?? 'top-right');
+      slotIndex.current += 1;
       setPhase('in');
       pulseCore(0.5);
       dismissTimer.current = setTimeout(dismissSurface, AUTO_DISMISS_MS);
@@ -496,7 +514,7 @@ export function Surface({ client }: { client: BridgeClient | null }): JSX.Elemen
 
   return (
     <aside
-      className={`surface surface--is-${phase}`}
+      className={`surface surface--slot-${slot} surface--is-${phase}`}
       role="status"
       aria-live="polite"
       aria-label={displayed.title}
@@ -509,6 +527,69 @@ export function Surface({ client }: { client: BridgeClient | null }): JSX.Elemen
         {renderSurface(displayed, client)}
       </div>
     </aside>
+  );
+}
+
+// ----------------------------------------------------------- system rings
+
+/**
+ * One donut ring — a coloured arc drawn over a faint background ring, with the
+ * value ("47°C", "62%") centred inside and a short label under it. Pure SVG so
+ * it scales with the panel and has no runtime deps. The colour follows the
+ * ring's tone: an OK reading stays accent-blue, a warn is amber, a critical
+ * (hot CPU, near-full disk) turns red.
+ */
+function SystemRing({ ring }: { ring: SystemRingPayload }): JSX.Element {
+  const size = 128;
+  const stroke = 10;
+  const radius = size / 2 - stroke;
+  const circumference = 2 * Math.PI * radius;
+  const filled = Math.max(0, Math.min(1, ring.fraction));
+  const dash = circumference * filled;
+  const gap = circumference - dash;
+  const tone = ring.tone ?? 'ok';
+  return (
+    <figure className={`system-ring system-ring--${tone}`}>
+      <svg viewBox={`0 0 ${size} ${size}`} width="100%" aria-hidden="true">
+        <circle
+          className="system-ring__track"
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          strokeWidth={stroke}
+        />
+        <circle
+          className="system-ring__arc"
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={`${dash} ${gap}`}
+          // Start the arc at 12 o'clock — the classic dial orientation.
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        />
+      </svg>
+      <div className="system-ring__centre">
+        <div className="system-ring__value">{ring.value}</div>
+      </div>
+      <figcaption className="system-ring__label">
+        <span>{ring.label}</span>
+        {ring.caption && <small>{ring.caption}</small>}
+      </figcaption>
+    </figure>
+  );
+}
+
+function SystemRingsView({ rings }: { rings: SystemRingPayload[] }): JSX.Element {
+  return (
+    <div className="surface__system-rings">
+      {rings.map((ring) => (
+        <SystemRing key={ring.label} ring={ring} />
+      ))}
+    </div>
   );
 }
 
@@ -544,5 +625,7 @@ function renderSurface(
           cameras={surface.cameras}
         />
       );
+    case 'system-stats':
+      return <SystemRingsView rings={surface.rings} />;
   }
 }

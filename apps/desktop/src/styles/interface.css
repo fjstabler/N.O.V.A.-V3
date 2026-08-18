@@ -370,13 +370,34 @@
 
 .surface {
   position: fixed;
+  z-index: 25;
+  width: min(30rem, 42vw);
+  max-height: 78vh;
+  pointer-events: none;  /* the empty space around it stays click-through */
+}
+
+/*
+ * The Core sits centred and takes roughly the middle 60% of the viewport, so
+ * each slot hugs a corner or the mid-right — none of them cover it. The offset
+ * from the screen edge is large enough that a surface never bleeds under the
+ * clock (top-left) or the notification stack (top-right corner of the panel).
+ */
+.surface--slot-top-right {
+  top: max(4rem, 6vh);
+  right: max(2vw, 1.5rem);
+}
+.surface--slot-right-mid {
   top: 50%;
   right: max(2vw, 1.5rem);
   transform: translateY(-50%);
-  z-index: 25;
-  width: min(30rem, 42vw);
-  max-height: 82vh;
-  pointer-events: none;  /* the empty space around it stays click-through */
+}
+.surface--slot-bottom-right {
+  bottom: max(2rem, 4vh);
+  right: max(2vw, 1.5rem);
+}
+.surface--slot-bottom-left {
+  bottom: max(2rem, 4vh);
+  left: max(2vw, 1.5rem);
 }
 
 .surface__card {
@@ -397,14 +418,31 @@
   overflow: hidden;
 }
 
-/* Enter and exit animations — the enter matches the Core's own quiet
- * arrival, the exit mirrors it so the panel doesn't just disappear. */
-.surface--is-in .surface__card {
-  animation: surface-slide-in 380ms var(--ease) both;
+/*
+ * Enter and exit — each slot slides in from its own side so the motion feels
+ * intentional to where the panel lands. The right-anchored slots come in from
+ * the right, the left-anchored ones from the left. The exit reverses.
+ */
+.surface--slot-top-right.surface--is-in .surface__card,
+.surface--slot-right-mid.surface--is-in .surface__card,
+.surface--slot-bottom-right.surface--is-in .surface__card {
+  animation: surface-in-right 380ms var(--ease) both;
 }
-.surface--is-out .surface__card {
-  animation: surface-slide-out 320ms var(--ease) both;
+.surface--slot-top-right.surface--is-out .surface__card,
+.surface--slot-right-mid.surface--is-out .surface__card,
+.surface--slot-bottom-right.surface--is-out .surface__card {
+  animation: surface-out-right 320ms var(--ease) both;
 }
+.surface--slot-bottom-left.surface--is-in .surface__card {
+  animation: surface-in-left 380ms var(--ease) both;
+}
+.surface--slot-bottom-left.surface--is-out .surface__card {
+  animation: surface-out-left 320ms var(--ease) both;
+}
+
+/* The animation applies to the inner card, so the outer `.surface`'s
+ * translateY on the right-mid slot is preserved automatically — the two
+ * transforms don't collide. */
 
 .surface__bar {
   display: flex;
@@ -443,29 +481,40 @@
   font-size: 0.85rem;
 }
 
-@keyframes surface-slide-in {
+@keyframes surface-in-right {
   from { opacity: 0; transform: translateX(1.5rem) scale(0.98); filter: blur(4px); }
   to   { opacity: 1; transform: translateX(0)     scale(1);     filter: blur(0); }
 }
-@keyframes surface-slide-out {
+@keyframes surface-out-right {
   from { opacity: 1; transform: translateX(0)     scale(1);     filter: blur(0); }
   to   { opacity: 0; transform: translateX(1.5rem) scale(0.98); filter: blur(4px); }
+}
+@keyframes surface-in-left {
+  from { opacity: 0; transform: translateX(-1.5rem) scale(0.98); filter: blur(4px); }
+  to   { opacity: 1; transform: translateX(0)      scale(1);     filter: blur(0); }
+}
+@keyframes surface-out-left {
+  from { opacity: 1; transform: translateX(0)      scale(1);     filter: blur(0); }
+  to   { opacity: 0; transform: translateX(-1.5rem) scale(0.98); filter: blur(4px); }
 }
 
 /* Respect the OS reduced-motion setting — swap the slide for a plain fade. */
 @media (prefers-reduced-motion: reduce) {
-  .surface--is-in .surface__card,
-  .surface--is-out .surface__card {
-    animation-duration: 180ms;
-    animation-name: fade-in;
+  .surface__card {
+    animation-duration: 180ms !important;
+    animation-name: fade-in !important;
   }
-  .surface--is-out .surface__card { animation-direction: reverse; }
+  .surface--is-out .surface__card { animation-direction: reverse !important; }
 }
 
-/* On very narrow windows the surface takes the bottom of the screen instead,
- * so it never covers the Core in a portrait layout. */
+/* On very narrow windows every slot collapses to the bottom, so no slot ever
+ * covers the Core in a portrait layout. */
 @media (max-width: 720px) {
-  .surface {
+  .surface,
+  .surface--slot-top-right,
+  .surface--slot-right-mid,
+  .surface--slot-bottom-right,
+  .surface--slot-bottom-left {
     top: auto;
     right: 1rem;
     left: 1rem;
@@ -956,6 +1005,84 @@
   font-size: 0.78rem;
   color: var(--text-secondary);
   background: rgba(0, 0, 0, 0.4);
+}
+
+/* --- surface: system rings ------------------------------------------ */
+
+.surface__system-rings {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.6rem;
+  padding: 1.1rem 1.2rem 1.4rem;
+}
+
+.system-ring {
+  position: relative;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  /* Each ring's colour is a CSS variable so the SVG arc, the value text and
+   * the caption tint pick up the same hue automatically. */
+  --ring-hue: #5aa8ff;
+}
+.system-ring--ok       { --ring-hue: #5aa8ff; }
+.system-ring--warn     { --ring-hue: #ffb84a; }
+.system-ring--critical { --ring-hue: #ff6a6a; }
+
+.system-ring__track {
+  stroke: color-mix(in oklab, var(--ring-hue) 14%, transparent);
+}
+
+.system-ring__arc {
+  stroke: var(--ring-hue);
+  filter: drop-shadow(0 0 6px color-mix(in oklab, var(--ring-hue) 55%, transparent));
+  transition: stroke-dasharray 480ms var(--ease);
+}
+
+.system-ring__centre {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 2rem;              /* leave space for the label under the SVG */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.system-ring__value {
+  font-size: 1.35rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.system-ring__label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+}
+.system-ring__label small {
+  font-size: 0.68rem;
+  color: var(--text-tertiary);
+  max-width: 10rem;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* On a narrow window, stack the rings instead of squashing them. */
+@media (max-width: 480px) {
+  .surface__system-rings { grid-template-columns: 1fr; gap: 0.9rem; }
 }
 
 /* ---------------------------------------------------------------- settings */
