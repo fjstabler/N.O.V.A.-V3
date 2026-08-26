@@ -159,3 +159,55 @@ def test_empty_and_unparseable_input() -> None:
 def test_absolute_paths_resolve_to_the_binary_name() -> None:
     assert classify("/usr/bin/df -h").risk is Risk.READ_ONLY
     assert classify("/bin/rm file").risk is Risk.DESTRUCTIVE
+
+
+def test_git_config_flag_cannot_smuggle_a_hook_command_past_read_only() -> None:
+    """`-c core.fsmonitor=<cmd>` makes git execute <cmd> on the next `git status` —
+    a real RCE technique, not theoretical. The flag's value must never be mistaken
+    for the subcommand and waved through as 'git status'."""
+    verdict = classify("git -c core.fsmonitor='touch /tmp/pwned' status")
+    assert verdict.risk is Risk.FORBIDDEN
+    assert classify("git --config core.pager=id status").risk is Risk.FORBIDDEN
+    # Ordinary git still works, including -C (change directory — unlike -c, it
+    # can't set a hook-executing config value, so it isn't treated as dangerous).
+    assert classify("git status").risk is Risk.READ_ONLY
+    assert classify("git -C /home/user/project status").risk is Risk.READ_ONLY
+
+
+def test_docker_host_flag_cannot_redirect_to_a_different_daemon() -> None:
+    """`-H`/`--host` points docker at an arbitrary daemon; combined with the flag
+    shifting `run`'s position, this used to classify as READ_ONLY."""
+    verdict = classify(
+        "docker -H unix:///var/run/docker.sock run --privileged -v /:/host -it alpine sh"
+    )
+    assert verdict.risk is Risk.FORBIDDEN
+    assert classify("docker --host tcp://evil:2375 ps").risk is Risk.FORBIDDEN
+    assert classify("docker ps").risk is Risk.READ_ONLY
+
+
+def test_docker_run_exec_create_always_need_confirmation() -> None:
+    """`--privileged` / a root bind mount / an exec into an existing container is
+    host-equivalent access — never merely 'recoverable', so never auto-runs."""
+    assert classify("docker run --privileged -v /:/host alpine sh").risk is Risk.DESTRUCTIVE
+    assert classify("docker exec -it mycontainer sh").risk is Risk.DESTRUCTIVE
+    assert classify("docker create --privileged alpine").risk is Risk.DESTRUCTIVE
+    assert classify("podman run --privileged -v /:/host alpine sh").risk is Risk.DESTRUCTIVE
+    assert classify("podman exec -it mycontainer sh").risk is Risk.DESTRUCTIVE
+    # pull/ps/ordinary mutations are unaffected.
+    assert classify("docker pull nginx:latest").risk is Risk.MUTATING
+    assert classify("docker ps -a").risk is Risk.READ_ONLY
+
+
+def test_mutating_subcommand_scan_matches_the_destructive_scan_window() -> None:
+    """The mutating check used to look only at tokens[1] — the destructive check
+    already scanned the whole window. Any flag shifting the verb's position broke
+    the mutating check specifically (and, before -C was in _VALUE_FLAGS, the
+    destructive check too — 'push' would have been invisible behind -C's value).
+    Both must now agree, and correctly skip flags that take a value."""
+    assert classify("git -C /home/user/project push").risk is Risk.DESTRUCTIVE
+    assert classify("kubectl --namespace=prod apply -f x.yaml").risk is Risk.MUTATING
+
+
+def test_traversal_cannot_hide_a_system_directory_delete() -> None:
+    assert classify("rm -rf /home/user/../../etc").risk is Risk.FORBIDDEN
+    assert classify("rm -rf /home/user/../../../var/lib/thing").risk is Risk.DESTRUCTIVE

@@ -73,10 +73,15 @@ class NovaPaths:
             self.log_file.parent,
         ):
             directory.mkdir(parents=True, exist_ok=True)
-        # The config dir holds API keys and integration tokens.
+        # config_dir holds API keys and integration tokens; data_dir holds
+        # conversation memory, calendar contents, enrolled face embeddings and
+        # logs — locking the directory itself is enough to keep both out of
+        # reach of other local accounts, regardless of individual file modes,
+        # since they'd need traverse permission on the directory to get in at all.
         if sys.platform != "win32":
-            with contextlib.suppress(OSError):
-                self.config_dir.chmod(0o700)
+            for directory in (self.config_dir, self.data_dir):
+                with contextlib.suppress(OSError):
+                    directory.chmod(0o700)
         return self
 
 

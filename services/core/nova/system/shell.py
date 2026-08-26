@@ -246,16 +246,46 @@ _MUTATING_SUBCOMMANDS: dict[str, frozenset[str]] = {
 }
 
 #: Subcommands that interrupt service or destroy data.
+#: `run`/`create`/`exec` are here, not just in _MUTATING_SUBCOMMANDS: a container
+#: started with `--privileged` or a root bind mount, or a shell exec'd into an
+#: existing container, is equivalent to host root — that is never "recoverable"
+#: enough to auto-run, regardless of what flags happen to be present.
 _DESTRUCTIVE_SUBCOMMANDS: dict[str, frozenset[str]] = {
     "systemctl": frozenset(
         {"poweroff", "reboot", "halt", "isolate", "mask", "kill", "suspend", "hibernate"}
     ),
-    "docker": frozenset({"prune", "rmi", "rm", "kill"}),
+    "docker": frozenset({"prune", "rmi", "rm", "kill", "run", "create", "exec"}),
+    "podman": frozenset({"run", "create", "exec"}),
     "apt": frozenset({"remove", "purge", "autoremove", "dist-upgrade", "full-upgrade"}),
     "zfs": frozenset({"destroy", "rollback"}),
     "zpool": frozenset({"destroy", "remove", "replace"}),
     "git": frozenset({"reset", "clean", "push"}),
-    "kubectl": frozenset({"delete", "drain"}),
+    "kubectl": frozenset({"delete", "drain", "exec"}),
+}
+
+#: Global flags that take a following value, keyed by binary. These must be
+#: skipped as a (flag, value) pair before subcommand extraction below, or the
+#: value token — e.g. the string after `-c` — gets mistaken for the subcommand
+#: itself and slips straight past every _MUTATING_SUBCOMMANDS/_DESTRUCTIVE_SUBCOMMANDS
+#: check, however dangerous it actually is.
+_VALUE_FLAGS: dict[str, frozenset[str]] = {
+    "git": frozenset({"-c", "--config", "-C", "--git-dir", "--work-tree", "--namespace"}),
+    "docker": frozenset({"-H", "--host", "--context", "--config", "--log-level"}),
+    "podman": frozenset({"-H", "--host", "--context", "--config", "--log-level"}),
+    "kubectl": frozenset({"--context", "--kubeconfig", "--namespace", "-n", "--server", "--token"}),
+    "systemctl": frozenset({"-H", "--host", "--root", "-M", "--machine"}),
+}
+
+#: Global flags that let the tool execute arbitrary code (git `-c core.fsmonitor=...`,
+#: `core.pager`, `core.sshCommand`, etc. all run their config value as a command) or
+#: redirect to a completely different target (docker `-H`/`--host` pointing at a
+#: different daemon). No amount of correct subcommand parsing makes these safe to
+#: let through the read-only/inspection path — refused outright regardless of the
+#: subcommand that follows.
+_DANGEROUS_GLOBAL_FLAGS: dict[str, frozenset[str]] = {
+    "git": frozenset({"-c", "--config"}),
+    "docker": frozenset({"-H", "--host", "--context"}),
+    "podman": frozenset({"-H", "--host", "--context"}),
 }
 
 #: Binaries that are always destructive, and always need confirmation.
@@ -344,6 +374,24 @@ FORBIDDEN_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 _SHELL_METACHARACTERS = re.compile(r"[|;&><`$(){}\[\]*?~\n]")
 
 
+def _normalize_paths(command: str) -> str:
+    """Collapse `..` segments in path-like tokens.
+
+    `rm -rf /home/user/../../etc` reads as an ordinary delete under FORBIDDEN_PATTERNS'
+    regex checks, which only look at the literal text — traversal like this is exactly
+    how a command can hide a system-directory target from them. Reconstructing the
+    command with every `..`-bearing token resolved lets the same patterns catch it.
+    """
+    try:
+        tokens = shlex.split(command, comments=True)
+    except ValueError:
+        return command
+    normalized = [
+        os.path.normpath(t) if "/" in t and ".." in t.split("/") else t for t in tokens
+    ]
+    return " ".join(shlex.quote(t) for t in normalized)
+
+
 @dataclass(slots=True)
 class CommandResult:
     command: str
@@ -391,8 +439,9 @@ def classify(command: str, *, extra_readonly: frozenset[str] | None = None) -> C
     if not stripped:
         return Classification(Risk.FORBIDDEN, "empty command")
 
+    normalized = _normalize_paths(stripped)
     for pattern, reason in FORBIDDEN_PATTERNS:
-        if pattern.search(stripped):
+        if pattern.search(stripped) or pattern.search(normalized):
             return Classification(Risk.FORBIDDEN, reason)
 
     uses_shell = bool(_SHELL_METACHARACTERS.search(stripped))
@@ -432,11 +481,38 @@ def classify(command: str, *, extra_readonly: frozenset[str] | None = None) -> C
     if binary in FORBIDDEN_COMMANDS:
         return Classification(Risk.FORBIDDEN, f"'{binary}' is not permitted", binary, uses_shell)
 
+    # A flag like `git -c core.fsmonitor=...` or `docker -H <daemon>` is unsafe
+    # regardless of the subcommand that follows — refuse before ever trying to
+    # parse one out.
+    dangerous_flags = _DANGEROUS_GLOBAL_FLAGS.get(binary, frozenset())
+    if dangerous_flags and any(t in dangerous_flags for t in tokens[1:]):
+        return Classification(
+            Risk.FORBIDDEN,
+            f"'{binary}' with a config/host-redirect flag is not permitted",
+            binary,
+            uses_shell,
+        )
+
     # Tools nest their verbs ("docker system prune", "kubectl rollout restart"), so
     # scan the leading non-flag tokens rather than just the first one — otherwise
-    # `docker system prune` reads as the benign `docker system`.
-    subcommands = [t for t in tokens[1:] if not t.startswith("-")][:3]
-    subcommand = subcommands[0] if subcommands else ""
+    # `docker system prune` reads as the benign `docker system`. Flags that take a
+    # value (git `-c <val>`, docker `-H <val>`) are skipped as a pair, or the value
+    # token gets mistaken for the subcommand itself.
+    value_flags = _VALUE_FLAGS.get(binary, frozenset())
+    subcommands: list[str] = []
+    skip_next = False
+    for t in tokens[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if t in value_flags:
+            skip_next = True
+            continue
+        if t.startswith("-"):
+            continue
+        subcommands.append(t)
+        if len(subcommands) == 3:
+            break
 
     if binary in _DESTRUCTIVE_SUBCOMMANDS:
         hit = next((s for s in subcommands if s in _DESTRUCTIVE_SUBCOMMANDS[binary]), "")
@@ -444,8 +520,10 @@ def classify(command: str, *, extra_readonly: frozenset[str] | None = None) -> C
             return Classification(Risk.DESTRUCTIVE, f"{binary} {hit}", binary, uses_shell)
     if binary in DESTRUCTIVE_COMMANDS:
         return Classification(Risk.DESTRUCTIVE, f"'{binary}' can destroy data", binary, uses_shell)
-    if binary in _MUTATING_SUBCOMMANDS and subcommand in _MUTATING_SUBCOMMANDS[binary]:
-        return Classification(Risk.MUTATING, f"{binary} {subcommand}", binary, uses_shell)
+    if binary in _MUTATING_SUBCOMMANDS:
+        hit = next((s for s in subcommands if s in _MUTATING_SUBCOMMANDS[binary]), "")
+        if hit:
+            return Classification(Risk.MUTATING, f"{binary} {hit}", binary, uses_shell)
 
     allowed = READ_ONLY_COMMANDS | (extra_readonly or frozenset())
     if binary in allowed:

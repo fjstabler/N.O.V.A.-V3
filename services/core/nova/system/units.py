@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..runtime.errors import IntegrationError
+from ..runtime.errors import IntegrationError, PermissionDenied
 from ..runtime.logging import get_logger
 
 log = get_logger(__name__)
@@ -124,6 +124,15 @@ class SystemdManager:
         if action not in ("start", "stop", "restart", "reload"):
             raise IntegrationError("systemd", f"unsupported action '{action}'")
         name = _normalise(unit)
+        # Empty means unrestricted (matches DesktopSettings.app_allowlist's own
+        # "empty = any" convention) — but a non-empty list is the operator's
+        # explicit scoping decision, and it was previously stored but never
+        # checked here, so it silently did nothing.
+        if self.managed_units and name not in self.managed_units:
+            raise PermissionDenied(
+                f"'{name}' is not in the allowed unit list (server.managed_units) — "
+                "add it there first if this should be controllable"
+            )
         await self._run("systemctl", action, name, check=True)
         log.info("unit_control", action=action, unit=name)
         after = await self.status(name)

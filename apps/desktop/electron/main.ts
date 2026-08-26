@@ -212,7 +212,7 @@ function createWindow(): BrowserWindow {
       preload: join(dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
       webSecurity: true,
       // The Core is a WebGL2 renderer; without this a background window drops
       // to 1 FPS and the animation stutters when it regains focus.

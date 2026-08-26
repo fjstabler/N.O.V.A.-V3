@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nova.transport.server import resolve_static_path
+from websockets.datastructures import Headers
+
+from nova.transport.server import _add_security_headers, resolve_static_path
 
 
 def make_root(tmp_path: Path) -> Path:
@@ -72,3 +74,18 @@ def test_directory_traversal_is_blocked(tmp_path: Path) -> None:
 
 def test_missing_static_root_does_not_crash(tmp_path: Path) -> None:
     assert resolve_static_path(tmp_path / "does-not-exist", "/") is None
+
+
+def test_security_headers_are_applied() -> None:
+    """This page is served over the LAN/tailnet — unlike the Electron shell,
+    which loads only its own bundled code, it's genuinely reachable by
+    something other than the intended user, so it gets a real CSP."""
+    headers = Headers()
+    _add_security_headers(headers)
+
+    csp = headers["Content-Security-Policy"]
+    assert "default-src 'self'" in csp
+    assert "object-src 'none'" in csp
+    assert "frame-ancestors 'none'" in csp
+    assert headers["X-Content-Type-Options"] == "nosniff"
+    assert headers["X-Frame-Options"] == "DENY"

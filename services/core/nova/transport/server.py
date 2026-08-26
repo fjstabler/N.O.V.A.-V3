@@ -93,6 +93,21 @@ def resolve_static_path(root: Path, url_path: str) -> Path | None:
 _LIVE_CAMERA_MAX_EDGE = 800
 _LIVE_CAMERA_JPEG_QUALITY = 70
 
+#: Unlike the Electron shell (which loads only its own bundled code), this
+#: page is served over the LAN/tailnet — the one surface here actually
+#: reachable by something other than the intended user, so it gets the same
+#: defence-in-depth headers the Electron app's index.html carries.
+_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+    "connect-src 'self'; object-src 'none'; form-action 'none'; frame-ancestors 'none'"
+)
+
+
+def _add_security_headers(headers: Headers) -> None:
+    headers["Content-Security-Policy"] = _CSP
+    headers["X-Content-Type-Options"] = "nosniff"
+    headers["X-Frame-Options"] = "DENY"
+
 #: Topics never forwarded to the UI — internal plumbing or secrets.
 _PRIVATE_PREFIXES = ("internal.", "secret.")
 
@@ -188,6 +203,7 @@ class BridgeService(Service):
         headers["Content-Type"] = content_type
         headers["Content-Length"] = str(len(body))
         headers["Cache-Control"] = "no-cache"
+        _add_security_headers(headers)
         return Response(200, "OK", headers, body)
 
     # ------------------------------------------------------------------ camera
@@ -234,6 +250,7 @@ class BridgeService(Service):
         headers["Content-Type"] = "image/jpeg"
         headers["Content-Length"] = str(len(image))
         headers["Cache-Control"] = "no-store"
+        _add_security_headers(headers)
         return Response(200, "OK", headers, image)
 
     def _request_authorised(self, request: Request) -> bool:

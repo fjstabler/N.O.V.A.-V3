@@ -24,7 +24,7 @@ from ..runtime.logging import get_logger
 
 log = get_logger(__name__)
 
-#: Never readable, even inside a configured root.
+#: Never readable, even inside a configured root — matched by exact component name.
 DENIED_NAMES: frozenset[str] = frozenset(
     {
         ".ssh",
@@ -40,8 +40,35 @@ DENIED_NAMES: frozenset[str] = frozenset(
         ".env",
         "credentials",
         ".password-store",
+        ".git-credentials",
+        ".npmrc",
+        ".pypirc",
+        ".pgpass",
+        ".my.cnf",
     }
 )
+
+#: Same idea, but for credential files that don't have one fixed name — an SSH
+#: key saved as anything other than exactly `id_rsa`/`id_ed25519` (`id_ecdsa`, a
+#: custom name, a `.pem`/`.p12` export) walked straight through the exact-match
+#: list above. Matched case-insensitively against the final path component only.
+DENIED_NAME_PATTERNS: tuple[str, ...] = (
+    "id_*",
+    "*_rsa",
+    "*_dsa",
+    "*_ecdsa",
+    "*_ed25519",
+    "*.pem",
+    "*.pfx",
+    "*.p12",
+)
+
+
+def _is_denied_name(name: str) -> bool:
+    lowered = name.lower()
+    if lowered in DENIED_NAMES:
+        return True
+    return any(fnmatch.fnmatch(lowered, pattern) for pattern in DENIED_NAME_PATTERNS)
 
 #: Files above this size are summarised rather than read whole.
 MAX_READ_BYTES = 512 * 1024
@@ -104,7 +131,7 @@ class FileSandbox:
             raise PermissionDenied(f"'{resolved}' is outside the permitted roots ({allowed})")
 
         for part in resolved.parts:
-            if part.lower() in DENIED_NAMES:
+            if _is_denied_name(part):
                 raise PermissionDenied(f"'{part}' holds credentials and is never accessible")
 
         if must_exist and not resolved.exists():
@@ -154,7 +181,7 @@ class FileSandbox:
         entries: list[FileEntry] = []
         with os.scandir(path) as iterator:
             for entry in iterator:
-                if entry.name.lower() in DENIED_NAMES:
+                if _is_denied_name(entry.name):
                     continue
                 if pattern and not fnmatch.fnmatch(entry.name, pattern):
                     continue
@@ -184,7 +211,7 @@ class FileSandbox:
         for path in base.rglob(pattern):
             if len(found) >= limit:
                 break
-            if any(part.lower() in DENIED_NAMES for part in path.parts):
+            if any(_is_denied_name(part) for part in path.parts):
                 continue
             try:
                 stat = path.stat()
@@ -206,7 +233,7 @@ class FileSandbox:
         for path in base.rglob(glob):
             if len(matches) >= limit:
                 break
-            if not path.is_file() or any(p.lower() in DENIED_NAMES for p in path.parts):
+            if not path.is_file() or any(_is_denied_name(p) for p in path.parts):
                 continue
             try:
                 if path.stat().st_size > 4 * 1024 * 1024:

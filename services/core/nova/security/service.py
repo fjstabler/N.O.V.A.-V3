@@ -16,7 +16,6 @@ import asyncio
 import secrets
 import time
 from typing import Any
-from urllib.parse import quote
 
 from ..context import NovaContext
 from ..integrations.local_camera import local_camera_pool
@@ -245,9 +244,16 @@ class SecurityService(Service):
         return topic
 
     def _mobile_camera_url(self, camera: Any) -> str:
+        """A link to the mobile app so the alert can be tapped through to.
+
+        Deliberately does NOT embed `transport.token` — that's the same
+        full-privilege secret that gates the entire bridge (every skill tool,
+        settings, camera access), and this URL is handed to a third-party push
+        relay (ntfy.sh by default), not delivered directly to the user. A
+        paired device already holds its own copy of the token in its own
+        local storage; this just points it at the app, where it can use that.
+        """
         base = self.ctx.settings.transport.public_url.rstrip("/")
-        if not base:
+        if not base or camera is None:
             return ""
-        token = self.ctx.settings.transport.token
-        slug = quote(f"local:{camera.name}", safe="")
-        return f"{base}/?token={quote(token)}&camera={slug}"
+        return f"{base}/"

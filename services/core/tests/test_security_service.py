@@ -347,9 +347,12 @@ async def test_no_click_url_without_a_configured_public_url(
     assert fake_ntfy[0]["click_url"] == ""
 
 
-async def test_click_url_points_at_the_camera_when_public_url_is_set(
+async def test_click_url_points_at_the_app_but_never_carries_the_bridge_token(
     ctx: NovaContext, fake_ntfy: list[dict[str, Any]]
 ) -> None:
+    """The click URL is handed to a third-party push relay (ntfy.sh by default),
+    so it must never carry `transport.token` — that's the same full-privilege
+    secret that gates the entire bridge, not a camera-scoped credential."""
     configure(ctx, confirm_frames=1)
     ctx.store.patch(
         {"transport": {"public_url": "https://box.tailnet.ts.net", "token": "secret"}},
@@ -361,9 +364,10 @@ async def test_click_url_points_at_the_camera_when_public_url_is_set(
 
     await service._check_once(0)
 
-    assert fake_ntfy[0]["click_url"] == (
-        "https://box.tailnet.ts.net/?token=secret&camera=local%3Abedroom"
-    )
+    click_url = fake_ntfy[0]["click_url"]
+    assert click_url == "https://box.tailnet.ts.net/"
+    assert "secret" not in click_url
+    assert "token" not in click_url
 
 
 # ------------------------------------------------------------ failure modes

@@ -116,6 +116,34 @@ def test_credential_directories_are_always_denied(tmp_path: Path) -> None:
         sandbox.resolve(str(root / ".ssh" / "id_rsa"))
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        ".git-credentials",
+        ".npmrc",
+        ".pgpass",
+        ".my.cnf",
+        "id_ecdsa",  # not literally id_rsa/id_ed25519, but still an SSH key
+        "deploy_ed25519",
+        "server.pem",
+        "client.p12",
+    ],
+)
+def test_credential_file_patterns_beyond_the_exact_name_list_are_denied(
+    tmp_path: Path, name: str
+) -> None:
+    """DENIED_NAMES alone only catches a fixed set of exact filenames — a key
+    saved under any other name, or a well-known credential file with no single
+    canonical name, needs pattern matching to be caught at all."""
+    root = tmp_path / "home"
+    root.mkdir()
+    (root / name).write_text("secret", encoding="utf-8")
+    sandbox = FileSandbox((str(root),))
+
+    with pytest.raises(PermissionDenied, match="credentials"):
+        sandbox.resolve(str(root / name))
+
+
 def test_missing_files_are_reported(sandbox: FileSandbox) -> None:
     with pytest.raises(PermissionDenied, match="no such file"):
         sandbox.resolve("does-not-exist.txt")

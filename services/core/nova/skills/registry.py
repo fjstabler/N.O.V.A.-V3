@@ -364,7 +364,9 @@ class SkillRegistry(Service):
         token = secrets.token_urlsafe(12)
         summary = _summarise(spec, arguments)
         self._pending[token] = _PendingAction(spec, arguments, summary, time.time())
-        self.log.info("confirmation_required", tool=spec.qualified_name, token=token)
+        # Token deliberately not logged: it is a short-lived bearer credential for
+        # this one action, and the log file isn't guarded as tightly as a secret.
+        self.log.info("confirmation_required", tool=spec.qualified_name)
         return ConfirmationRequired(spec.qualified_name, summary, token)
 
     async def confirm(self, token: str) -> Any:

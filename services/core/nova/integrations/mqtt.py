@@ -87,6 +87,13 @@ class MQTTClient:
             client = mqtt.Client(client_id=self._client_id)
 
         if self._username:
+            if not self._tls:
+                log.warning(
+                    "mqtt_credentials_without_tls",
+                    host=self.host,
+                    detail="username/password will be sent unencrypted to this broker — "
+                    "enable mqtt.tls if it supports it",
+                )
             client.username_pw_set(self._username, self._password)
         if self._tls:
             client.tls_set()

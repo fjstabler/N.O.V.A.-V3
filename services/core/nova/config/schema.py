@@ -181,7 +181,13 @@ class NotificationSettings(BaseModel):
     push_enabled: bool = True
     push_server: str = Field(default="https://ntfy.sh")
     #: Generated on first use if left blank — see PresenceService._ensure_push_topic.
-    push_topic: str = Field(default="", description="ntfy topic for phone notifications")
+    #: A topic name *is* the bearer credential for anyone who learns it (ntfy.sh is
+    #: a public relay), so it's marked secret the same as a token would be.
+    push_topic: str = Field(
+        default="",
+        description="ntfy topic for phone notifications",
+        json_schema_extra={"secret": True},
+    )
 
 
 class HomeAssistantSettings(BaseModel):
@@ -423,7 +429,9 @@ class SecuritySettings(BaseModel):
     #: A free push-notification relay (ntfy.sh by default; self-hostable).
     ntfy_server: str = Field(default="https://ntfy.sh")
     #: Generated on first arm if left blank — see SecurityService._ensure_topic.
-    ntfy_topic: str = ""
+    #: A topic name *is* the bearer credential for anyone who learns it (ntfy.sh is
+    #: a public relay), so it's marked secret the same as a token would be.
+    ntfy_topic: str = Field(default="", json_schema_extra={"secret": True})
 
 
 class FrigateSettings(BaseModel):
