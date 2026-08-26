@@ -497,29 +497,6 @@ class PresenceSettings(BaseModel):
     match_threshold: float = Field(default=0.363, ge=0.0, le=1.0)
 
 
-class OsintSettings(BaseModel):
-    """Self-directed OSINT: check what's exposed about things YOU own, not a lookup tool.
-
-    Every tool this feeds takes an email, domain, indicator, local file, or free-text
-    query the user supplies about themselves — never a name+DOB or similar identity
-    key, and nothing here cross-references multiple sources into a profile of a third
-    party. See ``skills/builtin/osint.py`` for the enforced scope.
-    """
-
-    enabled: bool = True
-    #: Have I Been Pwned — breach exposure for an email you own.
-    hibp_api_key: str = Secret
-    #: Brave Search — free-text footprint search ("what shows up for my name/handle").
-    brave_api_key: str = Secret
-    #: VirusTotal — reputation lookup for a suspicious IP/domain/file hash.
-    virustotal_api_key: str = Secret
-    #: AbuseIPDB — abuse reports for a suspicious IP.
-    abuseipdb_api_key: str = Secret
-    #: Shodan — exposed-service lookup for an IP you administer.
-    shodan_api_key: str = Secret
-    request_timeout: float = Field(default=15.0, ge=5.0, le=60.0)
-
-
 class PluginSettings(BaseModel):
     #: Skills disabled by name. Everything discovered is enabled by default.
     disabled: list[str] = Field(default_factory=list)
@@ -598,7 +575,6 @@ class NovaSettings(BaseModel):
     frigate: FrigateSettings = Field(default_factory=FrigateSettings)
     personwatch: PersonWatchSettings = Field(default_factory=PersonWatchSettings)
     presence: PresenceSettings = Field(default_factory=PresenceSettings)
-    osint: OsintSettings = Field(default_factory=OsintSettings)
     plugins: PluginSettings = Field(default_factory=PluginSettings)
     developer: DeveloperSettings = Field(default_factory=DeveloperSettings)
     transport: TransportSettings = Field(default_factory=TransportSettings)

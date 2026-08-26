@@ -91,12 +91,6 @@ vision = [
 person = [
   "ultralytics>=8.1,<9",
 ]
-# Self-directed OSINT: DNS record lookups for the domain-recon tool. WHOIS and
-# certificate-transparency use the standard library and httpx respectively, so
-# dnspython is the only addition.
-osint = [
-  "dnspython>=2.6",
-]
 dev = [
   "pytest>=8.2",
   "pytest-asyncio>=0.23",
