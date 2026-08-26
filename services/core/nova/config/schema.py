@@ -497,6 +497,38 @@ class PresenceSettings(BaseModel):
     match_threshold: float = Field(default=0.363, ge=0.0, le=1.0)
 
 
+class FinanceSettings(BaseModel):
+    """Personal finance advisor: a live Starling Bank balance plus expiring
+    reminders about one-off upcoming costs, so 'can I afford this' has real
+    numbers behind it.
+
+    Strictly read-only against the bank — nothing here can move money, freeze
+    a card, or hold a purchase, because no bank exposes that to a third party
+    in the first place. This exists so the user can ask before spending, the
+    way they'd ring an advisor — never to intercept a purchase after the fact.
+    """
+
+    enabled: bool = False
+    starling_access_token: str = Secret
+    starling_sandbox: bool = Field(
+        default=False, description="Use Starling's sandbox API instead of the real account"
+    )
+    #: Matches an account's `name` field from Starling's /accounts list; empty
+    #: uses the first account returned, which covers the common single-account case.
+    account_name: str = Field(
+        default="", description="Which Starling account to use, if more than one"
+    )
+    #: A payment can settle a day or two after its due date, so a reminder that
+    #: vanished exactly on the due date would still be wrong when asked "what's
+    #: still coming up" the next morning.
+    upcoming_expense_grace_days: int = Field(
+        default=3, ge=0, le=30, description="Days after the due date a reminder stays visible"
+    )
+    recent_spend_days: int = Field(
+        default=30, ge=1, le=90, description="Window used to judge normal discretionary spending"
+    )
+
+
 class PluginSettings(BaseModel):
     #: Skills disabled by name. Everything discovered is enabled by default.
     disabled: list[str] = Field(default_factory=list)
@@ -571,6 +603,7 @@ class NovaSettings(BaseModel):
     routines: RoutinesSettings = Field(default_factory=RoutinesSettings)
     homelab: HomeLabSettings = Field(default_factory=HomeLabSettings)
     vision: VisionSettings = Field(default_factory=VisionSettings)
+    finance: FinanceSettings = Field(default_factory=FinanceSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     frigate: FrigateSettings = Field(default_factory=FrigateSettings)
     personwatch: PersonWatchSettings = Field(default_factory=PersonWatchSettings)
