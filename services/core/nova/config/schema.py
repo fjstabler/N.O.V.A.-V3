@@ -124,6 +124,11 @@ class AudioSettings(BaseModel):
     output_device: str = Field(default="")
     input_gain: float = Field(default=1.0, ge=0.1, le=4.0)
     sample_rate: int = Field(default=16000)
+    #: Let a paired panel act as the microphone and speaker. Required on a
+    #: headless host, which has no sound hardware of its own to fall back to.
+    allow_remote: bool = Field(
+        default=True, description="Allow a paired device to be the microphone and speaker"
+    )
 
 
 class VoiceSettings(BaseModel):

@@ -21,14 +21,25 @@ stops it from running.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import secrets
 import time
 from enum import StrEnum
 from typing import Any
 
 from ..context import NovaContext
 from ..runtime import NovaState, Service, Topics
-from ..runtime.errors import DegradedCapability
-from .audio import FRAME_SAMPLES, SAMPLE_RATE, AudioInput, AudioOutput, list_devices
+from ..runtime.errors import DegradedCapability, NovaError
+from .audio import (
+    FRAME_BYTES,
+    FRAME_SAMPLES,
+    SAMPLE_RATE,
+    AudioInput,
+    AudioOutput,
+    MicrophoneSource,
+    list_devices,
+)
+from .remote import REMOTE_CAPTURE, RemoteMicrophone, RemoteSpeaker
 from .stt import Transcriber
 from .tts import Synthesiser
 from .vad import Endpointer, EndpointState
@@ -51,8 +62,22 @@ class VoiceService(Service):
     def __init__(self, ctx: NovaContext) -> None:
         super().__init__(ctx)
         settings = ctx.settings.voice
-        self.input = AudioInput(device=settings.audio.input_device, gain=settings.audio.input_gain)
-        self.output = AudioOutput(device=settings.audio.output_device, volume=settings.tts.volume)
+        # The local pair is built once and kept, even on a machine with no
+        # sound hardware: attaching a remote device swaps the pointers below,
+        # and detaching has to have something to swap back to.
+        self._local_input = AudioInput(
+            device=settings.audio.input_device, gain=settings.audio.input_gain
+        )
+        self._local_output = AudioOutput(
+            device=settings.audio.output_device, volume=settings.tts.volume
+        )
+        self.input: MicrophoneSource = self._local_input
+        self.output: AudioOutput | RemoteSpeaker = self._local_output
+        self._remote: RemoteMicrophone | None = None
+        self._remote_session = ""
+        self._local_microphone = False
+        self._listen_task: asyncio.Task[None] | None = None
+        self._level_task: asyncio.Task[None] | None = None
         self.wake = WakeWordDetector(
             settings.wake.model,
             sensitivity=settings.wake.sensitivity,
@@ -91,22 +116,40 @@ class VoiceService(Service):
         await self._load_stage("synthesis", self.synthesiser.load, enabled=settings.tts.enabled)
 
         try:
-            self.input.start()
+            self._local_input.start()
         except DegradedCapability as exc:
+            # Not fatal, and on a headless box not even unexpected: a panel can
+            # attach its own microphone later (see `attach_remote`), and until
+            # one does, synthesis and typed input still work.
             self._degraded["microphone"] = exc.reason
             self.log.warning("microphone_unavailable", reason=exc.reason)
-            # Synthesis may still work — keep the speech worker running.
-            self.spawn(self._speech_worker(), name="voice-speech")
-            return
+        else:
+            self._local_microphone = True
+            self._start_capture_loops()
 
-        self.spawn(self._listen_loop(), name="voice-listen")
         self.spawn(self._speech_worker(), name="voice-speech")
-        self.spawn(self._level_reporter(), name="voice-levels")
         self.ctx.store.on_change(self._on_settings_changed)
 
         if self._degraded:
             self.log.warning("voice_partially_degraded", **self._degraded)
-        self.log.info("voice_ready", state=self._state.value)
+        self.log.info("voice_ready", state=self._state.value, microphone=self._local_microphone)
+
+    def _start_capture_loops(self) -> None:
+        """Run the loops that only make sense with a microphone attached."""
+        if self._listen_task is None:
+            self._listen_task = self.spawn(self._listen_loop(), name="voice-listen")
+        if self._level_task is None:
+            self._level_task = self.spawn(self._level_reporter(), name="voice-levels")
+
+    async def _stop_capture_loops(self) -> None:
+        tasks = [task for task in (self._listen_task, self._level_task) if task is not None]
+        self._listen_task = None
+        self._level_task = None
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
     async def _load_stage(self, label: str, loader: Any, *, enabled: bool = True) -> None:
         if not enabled:
@@ -127,13 +170,15 @@ class VoiceService(Service):
     async def on_stop(self) -> None:
         self.output.cancel()
         self.input.stop()
+        self._local_input.stop()  # a no-op if it was never opened, or is `input`
         self.transcriber.close()
         self.synthesiser.close()
 
     def describe(self) -> str:
         if self._degraded:
             return "degraded: " + ", ".join(f"{k} ({v})" for k, v in self._degraded.items())
-        return f"{self.transcriber.model_size} on {self.transcriber.resolved_device}"
+        where = "remote mic" if self._remote is not None else "local mic"
+        return f"{self.transcriber.model_size} on {self.transcriber.resolved_device} · {where}"
 
     @property
     def capabilities(self) -> dict[str, bool]:
@@ -392,6 +437,124 @@ class VoiceService(Service):
         if self._state is ListenState.SUSPENDED:
             self._state = ListenState.WAKE
 
+    # ------------------------------------------------------------ remote audio
+
+    @property
+    def remote_attached(self) -> bool:
+        return self._remote is not None
+
+    async def attach_remote(self, *, gain: float | None = None) -> dict[str, Any]:
+        """Hand microphone and speaker duty to a device on the network.
+
+        Everything downstream of the stream is untouched — the same detector
+        scores the same frames with the same sensitivity — so a panel that
+        attaches here gets the wake word and the follow-up window, not a
+        second-class push-to-talk mode.
+        """
+        settings = self.ctx.settings.voice
+        if not settings.audio.allow_remote:
+            raise NovaError("remote audio is disabled in settings")
+
+        if self._remote is not None:
+            # A panel that reconnected without detaching cleanly. The newest
+            # attach wins; the previous session is gone by definition.
+            await self.detach_remote(reason="replaced")
+
+        await self._stop_capture_loops()
+        if self._local_microphone:
+            self._local_input.stop()
+
+        microphone = RemoteMicrophone(gain=settings.audio.input_gain if gain is None else gain)
+        microphone.start()
+        self._remote = microphone
+        self._remote_session = secrets.token_urlsafe(9)
+        self.input = microphone
+        self.output = RemoteSpeaker(self._publish_remote, volume=settings.tts.volume)
+        self._reset_capture()
+        self._degraded.pop("microphone", None)
+        self._start_capture_loops()
+        self.spawn(self._remote_watchdog(self._remote_session), name="voice-remote-watch")
+
+        self.log.info("remote_audio_attached", session=self._remote_session)
+        return {
+            "sessionId": self._remote_session,
+            "sampleRate": SAMPLE_RATE,
+            "frameSamples": FRAME_SAMPLES,
+            "frameBytes": FRAME_BYTES,
+            "capabilities": self.capabilities,
+            "wakePhrase": settings.wake.phrase,
+        }
+
+    async def detach_remote(self, *, reason: str = "detached") -> bool:
+        """Give the local hardware its job back, if this machine has any."""
+        if self._remote is None:
+            return False
+        await self._stop_capture_loops()
+        self._remote.stop()
+        self._remote = None
+        self._remote_session = ""
+        self.input = self._local_input
+        self.output = self._local_output
+        self._reset_capture()
+
+        try:
+            self._local_input.start()
+        except DegradedCapability as exc:
+            self._local_microphone = False
+            self._degraded["microphone"] = exc.reason
+        else:
+            self._local_microphone = True
+            self._degraded.pop("microphone", None)
+            self._start_capture_loops()
+
+        await self._return_to_idle()
+        self.log.info("remote_audio_detached", reason=reason, local=self._local_microphone)
+        return True
+
+    def submit_remote_frame(self, session: str, pcm: bytes) -> int:
+        """Feed one message of microphone audio in from the attached device."""
+        if self._remote is None:
+            raise NovaError("no remote audio source is attached")
+        if session and session != self._remote_session:
+            # A panel that reconnected mid-flight, still draining its old
+            # buffer. Refusing is what tells it to re-attach.
+            raise NovaError("stale audio session")
+        return self._remote.submit(pcm)
+
+    async def _remote_watchdog(self, session: str) -> None:
+        """Detach a device that stopped sending without saying goodbye.
+
+        A panel that loses power or Wi-Fi never sends a detach, and without
+        this the core would sit holding a microphone that will never produce
+        another frame — deaf, but reporting itself healthy.
+        """
+        while self._remote_session == session:
+            await asyncio.sleep(2.0)
+            remote = self._remote
+            if self._remote_session != session or remote is None:
+                return
+            if remote.stale:
+                self.log.warning(
+                    "remote_audio_stale", session=session, seconds=round(remote.seconds_since_frame)
+                )
+                await self.detach_remote(reason="stale")
+                return
+
+    def _publish_remote(self, topic: str, payload: dict[str, Any]) -> None:
+        self.bus.publish(topic, {**payload, "sessionId": self._remote_session}, source=self.name)
+
+    def _set_capture(self, capture: bool) -> None:
+        """Gate the microphone while N.O.V.A. is speaking.
+
+        Muting server-side is what makes it correct — frames are dropped
+        before any consumer sees them. Telling the device as well stops it
+        pushing audio up a link only to be discarded, and stops it capturing
+        our own voice at the one place echo can actually be prevented.
+        """
+        self.input.set_muted(not capture)
+        if self._remote is not None:
+            self._publish_remote(REMOTE_CAPTURE, {"capture": capture})
+
     # ---------------------------------------------------------------- speaking
 
     async def speak(self, text: str) -> None:
@@ -430,7 +593,7 @@ class VoiceService(Service):
         muted = settings.wake.mute_while_speaking
         if muted:
             # Without echo cancellation, our own output would re-trigger the wake word.
-            self.input.set_muted(True)
+            self._set_capture(False)
 
         await self.ctx.state.transition(NovaState.SPEAKING, reason="tts")
         self.bus.publish(Topics.SPEECH_STARTED, {"text": text}, source=self.name)
@@ -438,7 +601,7 @@ class VoiceService(Service):
             await self.output.play(samples, sample_rate)
         finally:
             if muted:
-                self.input.set_muted(False)
+                self._set_capture(True)
                 self.input.drain()
                 self.wake.reset()
             self.bus.publish(Topics.SPEECH_ENDED, {}, source=self.name)
@@ -488,6 +651,8 @@ class VoiceService(Service):
             "voices": self.synthesiser.available_voices(),
             "sampleRate": SAMPLE_RATE,
             "sttDevice": self.transcriber.resolved_device,
+            "remote": self._remote is not None,
+            "microphoneSource": "remote" if self._remote is not None else "local",
         }
 
     @staticmethod

@@ -203,6 +203,10 @@ class Topics:
     TRANSCRIPT_FINAL = "voice.transcript.final"
     SPEECH_STARTED = "voice.speech.started"
     SPEECH_ENDED = "voice.speech.ended"
+    # audio on a device that is not this one — see voice/remote.py
+    REMOTE_PLAY = "voice.remote.play"
+    REMOTE_STOP = "voice.remote.stop"
+    REMOTE_CAPTURE = "voice.remote.capture"
 
     # reasoning
     TURN_STARTED = "assistant.turn.started"

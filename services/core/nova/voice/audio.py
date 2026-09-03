@@ -21,7 +21,7 @@ import threading
 import wave
 from collections import deque
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from ..runtime.errors import MissingDependency
 from ..runtime.logging import get_logger
@@ -33,6 +33,40 @@ SAMPLE_RATE = 16000
 #: 80 ms at 16 kHz — the frame size openWakeWord is trained on.
 FRAME_SAMPLES = 1280
 BYTES_PER_SAMPLE = 2
+#: One wake-word frame on the wire.
+FRAME_BYTES = FRAME_SAMPLES * BYTES_PER_SAMPLE
+
+
+@runtime_checkable
+class MicrophoneSource(Protocol):
+    """Everything the listen loop needs from a microphone.
+
+    Named as a protocol rather than a base class because the two
+    implementations share no machinery: one copies frames off a PortAudio
+    real-time thread, the other takes them off a WebSocket (see
+    ``voice/remote.py``). What they owe the loop is this surface and the
+    guarantee that :meth:`frames` yields 80 ms of 16 kHz mono at a time.
+    """
+
+    #: Multiplier applied to every frame before it reaches a consumer.
+    gain: float
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None: ...
+
+    def frames(self) -> Any:
+        """Async iterator of 16-bit PCM frames; may yield b"" as an idle tick."""
+        ...
+
+    def read_preroll(self) -> bytes: ...
+
+    def drain(self) -> None: ...
+
+    def set_muted(self, muted: bool) -> None: ...
+
+    @property
+    def level(self) -> float: ...
 
 
 @dataclass(slots=True)
@@ -149,10 +183,10 @@ class AudioInput:
             log.debug("audio_input_status", status=str(status))
         frame = bytes(indata)
         if self.gain != 1.0:
-            frame = _apply_gain(frame, self.gain)
+            frame = apply_gain(frame, self.gain)
 
         with self._lock:
-            self._level = _rms(frame)
+            self._level = rms(frame)
             muted = self._muted
         self._preroll.append(frame)
         if muted:
@@ -275,7 +309,7 @@ def samples_to_wav_base64(samples: Any, sample_rate: int) -> str | None:
     return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
-def _rms(frame: bytes) -> float:
+def rms(frame: bytes) -> float:
     """Normalised loudness of a 16-bit frame, 0..1."""
     if not frame:
         return 0.0
@@ -289,7 +323,7 @@ def _rms(frame: bytes) -> float:
     return float(min(1.0, (numpy.sqrt(numpy.mean(samples**2)) / 32768.0) * 4.0))
 
 
-def _apply_gain(frame: bytes, gain: float) -> bytes:
+def apply_gain(frame: bytes, gain: float) -> bytes:
     try:
         import numpy
     except ImportError:

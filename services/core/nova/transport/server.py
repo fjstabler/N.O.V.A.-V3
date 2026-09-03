@@ -108,6 +108,7 @@ def _add_security_headers(headers: Headers) -> None:
     headers["X-Content-Type-Options"] = "nosniff"
     headers["X-Frame-Options"] = "DENY"
 
+
 #: Topics never forwarded to the UI — internal plumbing or secrets.
 _PRIVATE_PREFIXES = ("internal.", "secret.")
 

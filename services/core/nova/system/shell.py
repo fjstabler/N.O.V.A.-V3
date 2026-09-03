@@ -386,9 +386,7 @@ def _normalize_paths(command: str) -> str:
         tokens = shlex.split(command, comments=True)
     except ValueError:
         return command
-    normalized = [
-        os.path.normpath(t) if "/" in t and ".." in t.split("/") else t for t in tokens
-    ]
+    normalized = [os.path.normpath(t) if "/" in t and ".." in t.split("/") else t for t in tokens]
     return " ".join(shlex.quote(t) for t in normalized)
 
 

@@ -219,6 +219,43 @@ class NovaApplication:
                 "audio": audio,
             }
 
+        @route(Requests.AUDIO_SOURCE_ATTACH)
+        async def audio_source_attach(payload: dict[str, Any]) -> dict[str, Any]:
+            """Offer this client's microphone and speaker to the core.
+
+            Distinct from `voice.audio.submit`, which is one finished recording
+            from a client that holds a button. Attaching says the device will
+            keep a stream open, and in return it gets the whole pipeline —
+            wake word, endpointer, follow-up window — rather than a transcribe
+            -this round trip.
+            """
+            voice = self.ctx.service("voice", VoiceService)
+            if voice is None:
+                raise NovaError("voice is unavailable")
+            gain = payload.get("gain")
+            return await voice.attach_remote(gain=float(gain) if gain is not None else None)
+
+        @route(Requests.AUDIO_SOURCE_DETACH)
+        async def audio_source_detach(_: dict[str, Any]) -> dict[str, Any]:
+            voice = self.ctx.service("voice", VoiceService)
+            if voice is None:
+                return {"detached": False}
+            return {"detached": await voice.detach_remote()}
+
+        @route(Requests.AUDIO_SOURCE_FRAME)
+        async def audio_source_frame(payload: dict[str, Any]) -> dict[str, Any]:
+            voice = self.ctx.service("voice", VoiceService)
+            if voice is None:
+                raise NovaError("voice is unavailable")
+            raw = str(payload.get("pcm", ""))
+            if not raw:
+                return {"frames": 0}
+            try:
+                pcm = base64.b64decode(raw, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise NovaError("audio was not valid base64") from exc
+            return {"frames": voice.submit_remote_frame(str(payload.get("sessionId", "")), pcm)}
+
         @route(Requests.CONFIRM)
         async def confirm(payload: dict[str, Any]) -> dict[str, Any]:
             token = str(payload.get("token", ""))

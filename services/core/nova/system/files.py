@@ -70,6 +70,7 @@ def _is_denied_name(name: str) -> bool:
         return True
     return any(fnmatch.fnmatch(lowered, pattern) for pattern in DENIED_NAME_PATTERNS)
 
+
 #: Files above this size are summarised rather than read whole.
 MAX_READ_BYTES = 512 * 1024
 
