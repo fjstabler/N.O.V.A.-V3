@@ -25,11 +25,14 @@ for reading; this one is for speaking.
 ## Architecture at a glance
 
 ```
-┌────────────────────────────────────────────┐
-│  apps/desktop        Electron + React      │
-│    WebGL2 Core renderer, settings, panels  │
+┌──────────────────┬──────────────┬──────────┐
+│ apps/desktop     │ apps/panel   │ a phone  │
+│ Electron + React │ Android      │ browser  │
+│                  │ kiosk        │          │
+│   the same interface, built once, at /app/ │
 └───────────────────┬────────────────────────┘
-                    │ WebSocket, loopback, token-gated
+                    │ WebSocket, token-gated
+                    │ loopback, LAN or tailnet
 ┌───────────────────┴────────────────────────┐
 │  services/core     Python                  │
 │                                            │
@@ -45,7 +48,15 @@ for reading; this one is for speaking.
 ```
 
 Two processes, because inference must never block a 60 FPS renderer. They speak
-a small versioned protocol over loopback; see [docs/PROTOCOL.md](docs/PROTOCOL.md).
+a small versioned protocol; see [docs/PROTOCOL.md](docs/PROTOCOL.md).
+
+One interface, built once. The React app the Electron shell runs is also built
+for a browser and served by the core at `/app/`, so a wall panel and a phone
+get the same Core animation, surfaces and settings rather than a cut-down
+version that drifts. A client can also lend the core its microphone and
+speaker — wake word, transcription and synthesis all stay on the core, which is
+what lets a headless box in a rack still be something you talk to. See
+[apps/panel/README.md](apps/panel/README.md).
 
 Subsystems inside the core communicate **only** through an event bus. Nothing
 imports a sibling, which is what keeps the module graph acyclic and makes each
@@ -111,7 +122,8 @@ The assistant runs commands on real machines, so this is not an afterthought.
 | Path | What lives there |
 | --- | --- |
 | `services/core/nova/` | The assistant core |
-| `apps/desktop/` | Electron shell and the WebGL2 Core renderer |
+| `apps/desktop/` | Electron shell and the WebGL2 Core renderer; also builds the browser bundle |
+| `apps/panel/` | Android kiosk app — the interface plus a native microphone |
 | `packages/protocol/` | Shared wire types, checked against Python in CI |
 | `docs/` | Architecture, setup, protocol, plugin guide, ADRs |
 | `scripts/` | Model download, protocol parity check |

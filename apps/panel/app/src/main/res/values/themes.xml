@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.Panel" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:windowBackground">@color/void_bg</item>
+        <item name="android:statusBarColor">@color/void_bg</item>
+        <item name="android:navigationBarColor">@color/void_bg</item>
+    </style>
+
+    <!-- The WebView paints the whole screen, so the window behind it must be
+         the same near-black or every load flashes a pale frame. -->
+    <style name="Theme.Panel.Fullscreen" parent="Theme.Panel">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="p">shortEdges</item>
+    </style>
+</resources>

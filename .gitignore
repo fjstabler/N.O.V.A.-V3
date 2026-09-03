@@ -39,6 +39,15 @@ models/
 *.db-shm
 config.local.toml
 
+# ---- Android panel ----
+apps/panel/build/
+apps/panel/app/build/
+apps/panel/.gradle/
+apps/panel/local.properties
+*.apk
+*.aab
+*.keystore
+
 # ---- OS / editor ----
 .DS_Store
 Thumbs.db
