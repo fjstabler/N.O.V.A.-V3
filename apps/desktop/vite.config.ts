@@ -3,10 +3,26 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 import electron from 'vite-plugin-electron/simple';
 
-export default defineConfig(({ command }) => ({
+/**
+ * Two targets from one source.
+ *
+ * `--mode web` drops the Electron plugin and writes the bundle into the core's
+ * package, where the bridge serves it at `/app/`. It is the same React app the
+ * shell runs: the shell's extras — owning the core's lifecycle, global
+ * shortcuts — are reached through an optional `window.nova` that a browser
+ * simply does not have. Building a second GUI instead would mean two to keep
+ * in step, and the second one would always be the poor relation.
+ */
+export default defineConfig(({ command, mode }) => {
+  const web = mode === 'web';
+
+  return {
+  // Absolute for the web build so `/app` without a trailing slash still finds
+  // its assets; relative for Electron, which loads index.html over file://.
+  base: web ? '/app/' : './',
   plugins: [
     react(),
-    electron({
+    ...(web ? [] : [electron({
       main: {
         entry: 'electron/main.ts',
         vite: {
@@ -34,7 +50,7 @@ export default defineConfig(({ command }) => ({
           },
         },
       },
-    }),
+    })]),
   ],
   resolve: {
     alias: {
@@ -43,11 +59,19 @@ export default defineConfig(({ command }) => ({
     },
   },
   build: {
-    outDir: 'dist',
-    target: 'chrome122',
+    outDir: web
+      ? fileURLToPath(new URL('../../services/core/nova/webapp/static', import.meta.url))
+      : 'dist',
+    emptyOutDir: true,
+    // A panel runs a much older Chromium than an Electron 32 renderer does,
+    // and a bundle it cannot parse fails as a blank screen with nothing in the
+    // log worth reading.
+    target: web ? 'chrome87' : 'chrome122',
     // The Core renderer relies on precise float maths; keep it readable in
-    // crash reports rather than shaving a few kilobytes.
-    sourcemap: command === 'build',
+    // crash reports rather than shaving a few kilobytes. Not for the web
+    // bundle, which is committed — a 600 kB map per build is churn the
+    // repository does not need, and a local build still produces one.
+    sourcemap: !web && command === 'build',
     chunkSizeWarningLimit: 900,
   },
   server: {
@@ -58,4 +82,5 @@ export default defineConfig(({ command }) => ({
     environment: 'jsdom',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
   },
-}));
+  };
+});

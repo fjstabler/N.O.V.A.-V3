@@ -18,6 +18,7 @@ import {
   type Envelope,
   type RequestTopic,
 } from '@protocol';
+import { browserDescriptor, claimTokenFromUrl, socketScheme } from '@/lib/session';
 
 export type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'offline';
 
@@ -48,6 +49,7 @@ export class BridgeClient {
   private readonly pending = new Map<string, Pending>();
   private readonly handlers = new Map<string, Set<EventHandler>>();
   private readonly stateHandlers = new Set<(state: ConnectionState) => void>();
+  private readonly rejectionHandlers = new Set<() => void>();
   private attempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
@@ -70,7 +72,9 @@ export class BridgeClient {
     }
     this.descriptor = descriptor;
 
-    const url = `ws://${descriptor.host}:${descriptor.port}/?token=${encodeURIComponent(descriptor.token)}`;
+    // A browser API cannot set headers on a WebSocket handshake, so the token
+    // rides in the query string; the core accepts it there or as a bearer.
+    const url = `${socketScheme()}://${descriptor.host}:${descriptor.port}/?token=${encodeURIComponent(descriptor.token)}`;
 
     try {
       const socket = new WebSocket(url);
@@ -87,9 +91,15 @@ export class BridgeClient {
         this.socket = null;
         this.failPending(new BridgeError('connection closed', 'nova.disconnected'));
         if (this.closed) return;
-        // 4401 is our own "unauthorised". The descriptor is re-read on every
-        // attempt anyway, so a rotated token is picked up automatically.
-        if (event.code === 4401) console.warn('[bridge] token rejected — re-reading descriptor');
+        // 4401 is our own "unauthorised". Under Electron the descriptor is
+        // re-read every attempt, so a rotated token is picked up on its own.
+        // In a browser the stored token is all there is, and retrying it
+        // forever would look identical to the core being down — so say so and
+        // let the UI ask for a new one.
+        if (event.code === 4401) {
+          console.warn('[bridge] token rejected');
+          for (const handler of this.rejectionHandlers) handler();
+        }
         this.setState('reconnecting');
         this.scheduleReconnect();
       });
@@ -146,7 +156,8 @@ export class BridgeClient {
   resourceUrl(path: string): string | null {
     if (!this.descriptor) return null;
     const separator = path.includes('?') ? '&' : '?';
-    return `http://${this.descriptor.host}:${this.descriptor.port}${path}${separator}token=${encodeURIComponent(this.descriptor.token)}`;
+    const scheme = socketScheme() === 'wss' ? 'https' : 'http';
+    return `${scheme}://${this.descriptor.host}:${this.descriptor.port}${path}${separator}token=${encodeURIComponent(this.descriptor.token)}`;
   }
 
   get state(): ConnectionState {
@@ -162,6 +173,12 @@ export class BridgeClient {
   onStateChange(handler: (state: ConnectionState) => void): () => void {
     this.stateHandlers.add(handler);
     return () => this.stateHandlers.delete(handler);
+  }
+
+  /** Fires when the core refused the token, as opposed to being unreachable. */
+  onUnauthorised(handler: () => void): () => void {
+    this.rejectionHandlers.add(handler);
+    return () => this.rejectionHandlers.delete(handler);
   }
 
   // ---------------------------------------------------------------- messages
@@ -271,6 +288,34 @@ export class BridgeClient {
     });
   }
 
+  /**
+   * Send without waiting for the reply. Returns whether it went out.
+   *
+   * For a stream rather than an interaction — microphone frames arrive eight
+   * times a second, and a promise per frame would mean a timer per frame and,
+   * on a socket that stalls, a pile of pending entries each holding a
+   * twenty-second timeout for audio that stopped being interesting long ago.
+   * The core's reply is ignored: an unmatched id is already dropped above.
+   */
+  notify(topic: RequestTopic | string, payload: Record<string, unknown> = {}): boolean {
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    const envelope: Envelope = {
+      v: PROTOCOL_VERSION,
+      kind: 'request',
+      topic,
+      id: crypto.randomUUID().replace(/-/g, ''),
+      ts: Date.now() / 1000,
+      payload,
+    };
+    try {
+      socket.send(JSON.stringify(envelope));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private failPending(error: BridgeError): void {
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
@@ -283,33 +328,32 @@ export class BridgeClient {
 /**
  * Locate the core service.
  *
+ * Two ways in, and which one applies is decided by whether the Electron
+ * preload is present rather than by a build flag — the same bundle is served
+ * to a browser and loaded by the shell.
+ *
  * Never invents a token. An earlier version fell back to an empty one when the
  * preload was unavailable, which turned "the preload failed to load" into an
  * endless, silent stream of rejected connections — the loudest possible
  * symptom attached to the quietest possible cause. Returning null instead keeps
- * the client in its normal retry state and says exactly what is wrong, once.
+ * the client in its normal retry state and, in a browser, is what puts the UI
+ * into pairing rather than into a retry nobody can resolve.
  */
 export function createDescriptorResolver(): () => Promise<BridgeDescriptor | null> {
-  let warnedNoPreload = false;
-
   return async () => {
     const api = window.nova;
-
     if (api) {
       // Null here is ordinary: the core may not have finished binding yet.
       return await api.getBridge();
     }
 
-    if (!warnedNoPreload) {
-      warnedNoPreload = true;
-      console.error(
-        '[bridge] window.nova is missing — the Electron preload script did not load. ' +
-          'Check that dist-electron/preload.cjs exists and that main.ts points at it.',
-      );
-    }
+    // Served as a page. The core is whatever host answered for it, so only the
+    // token has to be found — from the pairing link, then from storage.
+    claimTokenFromUrl();
+    const descriptor = browserDescriptor();
+    if (descriptor) return descriptor;
 
-    // A plain browser during development can still connect, but only with a
-    // token the developer supplied deliberately.
+    // A dev server on :5273 is not the core, so there is nothing to infer.
     const token = import.meta.env.VITE_NOVA_TOKEN;
     if (import.meta.env.DEV && token) {
       return { host: '127.0.0.1', port: 8765, token, pid: 0, version: 1, startedAt: 0 };

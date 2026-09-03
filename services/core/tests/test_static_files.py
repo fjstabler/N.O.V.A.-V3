@@ -1,9 +1,13 @@
-"""Static file resolution for the mobile web client.
+"""Static file resolution for the two web clients.
 
 Runs on every plain HTTP GET the bridge receives — the same port a phone's
 browser loads the app shell from before it ever opens a WebSocket — so a path
 that escapes the static root here is a real read-anything-on-disk bug, not
 just a broken link.
+
+One port serves both the lightweight phone client at `/` and the full
+interface at `/app/`, so which root answers a request is a decision worth
+pinning down as well.
 """
 
 from __future__ import annotations
@@ -12,7 +16,15 @@ from pathlib import Path
 
 from websockets.datastructures import Headers
 
-from nova.transport.server import _add_security_headers, resolve_static_path
+from nova.transport.server import (
+    _APP_CSP,
+    _CSP,
+    APP_ROOT,
+    STATIC_ROOT,
+    _add_security_headers,
+    resolve_static_path,
+    route_static,
+)
 
 
 def make_root(tmp_path: Path) -> Path:
@@ -89,3 +101,51 @@ def test_security_headers_are_applied() -> None:
     assert "frame-ancestors 'none'" in csp
     assert headers["X-Content-Type-Options"] == "nosniff"
     assert headers["X-Frame-Options"] == "DENY"
+
+
+def test_the_app_policy_loosens_styles_but_never_scripts() -> None:
+    """React themes the Core through inline style attributes, so `/app/` cannot
+    use the phone client's stricter style policy. The line that actually keeps
+    an injected payload from running is script-src, and that one does not move."""
+    assert "style-src 'self' 'unsafe-inline'" in _APP_CSP
+    assert "script-src 'self';" in _APP_CSP
+    assert "'unsafe-inline'" not in _APP_CSP.split("script-src")[1].split(";")[0]
+
+
+# ------------------------------------------------------------------ routing
+
+
+def test_the_app_prefix_is_stripped_before_the_file_is_looked_up() -> None:
+    """The one thing this routing has to get right: `/app/assets/x.js` names a
+    file called `assets/x.js`, not one called `app/assets/x.js`."""
+    root, path, _ = route_static("/app/assets/index-abc.js")
+
+    assert root == APP_ROOT
+    assert path == "/assets/index-abc.js"
+
+
+def test_the_bare_prefix_still_reaches_the_app_shell() -> None:
+    """`/app` without a trailing slash is what someone actually types."""
+    root, path, _ = route_static("/app")
+
+    assert root == APP_ROOT
+    assert path == "/"
+
+
+def test_everything_else_stays_with_the_phone_client() -> None:
+    assert route_static("/")[0] == STATIC_ROOT
+    assert route_static("/app.js")[0] == STATIC_ROOT
+    assert route_static("/icons/icon.svg")[0] == STATIC_ROOT
+
+
+def test_a_path_that_merely_starts_with_the_prefix_is_not_the_app() -> None:
+    """`/application.js` shares five characters with `/app` and nothing else.
+    Matching on the prefix alone would hand it to the wrong root, where it
+    would 404 — confusingly, since the file exists."""
+    assert route_static("/application.js")[0] == STATIC_ROOT
+    assert route_static("/appearance/theme.css")[0] == STATIC_ROOT
+
+
+def test_each_root_is_served_under_its_own_policy() -> None:
+    assert route_static("/app/")[2] == _APP_CSP
+    assert route_static("/")[2] == _CSP

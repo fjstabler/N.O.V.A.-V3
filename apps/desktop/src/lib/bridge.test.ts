@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROTOCOL_VERSION } from '@protocol';
 import { BridgeClient, BridgeError, createDescriptorResolver } from './bridge';
+import { clearToken, storeToken } from './session';
 
 class FakeSocket {
   static instances: FakeSocket[] = [];
@@ -137,35 +138,77 @@ describe('resourceUrl', () => {
   });
 });
 
+/**
+ * A window with no `nova` on it, i.e. a browser. `session.ts` keeps the token
+ * in a module-level variable as well as storage, so each stub gets a fresh
+ * store and the resolver is re-created per test.
+ */
+function stubBrowser({ href, token = '' }: { href: string; token?: string }) {
+  const url = new URL(href);
+  const store = new Map<string, string>();
+  if (token) store.set('nova.bridge.token', token);
+  const replaceState = vi.fn();
+
+  vi.stubGlobal('window', {
+    location: {
+      href,
+      hostname: url.hostname,
+      port: url.port,
+      protocol: url.protocol,
+      search: url.search,
+    },
+    localStorage: {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+      removeItem: (key: string) => void store.delete(key),
+    },
+    history: { replaceState },
+  });
+  clearToken();
+  if (token) storeToken(token);
+  return { replaceState, store };
+}
+
 describe('descriptor resolution', () => {
   /**
    * Regression: the resolver used to fabricate a descriptor with an empty token
    * when the preload was unavailable. The core then rejected every connection
    * with 4401 forever, and the log filled with `bridge_unauthorised` while the
-   * actual fault — a preload that failed to load — was invisible.
+   * actual fault was invisible.
+   *
+   * There is no `window.nova` in a browser either, so this is now the ordinary
+   * unpaired case rather than a broken one — but the guarantee it was added
+   * for is unchanged, and matters more now that a real user can hit it.
    */
-  it('never invents a token when the preload is missing', async () => {
-    vi.stubGlobal('window', {});
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-
-    const resolve = createDescriptorResolver();
-    expect(await resolve()).toBeNull();
-
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('preload'));
-    error.mockRestore();
+  it('never invents a token when there is neither a preload nor a stored one', async () => {
+    stubBrowser({ href: 'http://panel.local:8765/app/' });
+    expect(await createDescriptorResolver()()).toBeNull();
   });
 
-  it('warns about a missing preload only once', async () => {
-    vi.stubGlobal('window', {});
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  it('derives host and port from the page that served it', async () => {
+    // The core is whatever answered for the page, so nothing has to be
+    // configured on the device beyond the token itself.
+    stubBrowser({ href: 'http://panel.local:8765/app/', token: 'stored-token' });
 
-    const resolve = createDescriptorResolver();
-    await resolve();
-    await resolve();
-    await resolve();
+    expect(await createDescriptorResolver()()).toMatchObject({
+      host: 'panel.local',
+      port: 8765,
+      token: 'stored-token',
+    });
+  });
 
-    expect(error).toHaveBeenCalledTimes(1);
-    error.mockRestore();
+  it('takes a token from the pairing link and strips it from the URL', async () => {
+    // A token left in the address bar is one screenshot or shared link away
+    // from being someone else's.
+    const { replaceState } = stubBrowser({ href: 'http://panel.local:8765/app/?token=from-link' });
+
+    expect(await createDescriptorResolver()()).toMatchObject({ token: 'from-link' });
+    expect(replaceState).toHaveBeenCalledWith({}, '', '/app/');
+  });
+
+  it('assumes the standard port when the page did not name one', async () => {
+    stubBrowser({ href: 'https://nova.example.ts.net/app/', token: 'stored-token' });
+    expect(await createDescriptorResolver()()).toMatchObject({ port: 443 });
   });
 
   it('passes the preload descriptor straight through', async () => {

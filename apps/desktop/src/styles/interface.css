@@ -1535,6 +1535,118 @@
 
 .settings-trigger svg { width: 17px; height: 17px; stroke-width: 1.4; }
 
+/* Sits beside the settings cog and behaves the same way: barely there until
+   it matters. When live it stops hiding — a microphone that is open should
+   never be something you have to go looking for. */
+.mic-toggle {
+  position: fixed;
+  bottom: 1.35rem;
+  right: 3.6rem;
+  z-index: 15;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--text-tertiary);
+  opacity: 0.38;
+  transition:
+    opacity var(--duration) var(--ease),
+    color var(--duration) var(--ease);
+}
+
+.mic-toggle:hover { opacity: 1; color: var(--accent-alt); }
+.mic-toggle:disabled { opacity: 0.16; }
+
+.mic-toggle.is-live {
+  opacity: 1;
+  color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--surface-border-strong);
+}
+
+.mic-toggle svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+/* ---------------------------------------------------------------- pairing */
+
+/* Shown only in a browser, and only until it has been answered once. */
+.pairing {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: var(--bg-void);
+  animation: fade-in var(--duration-slow) var(--ease);
+}
+
+.pairing__card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  width: min(26rem, 100%);
+  padding: 1.75rem;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.pairing__title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 500;
+  letter-spacing: 0.28em;
+  color: var(--text-primary);
+}
+
+.pairing__body {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.pairing__body code {
+  font-size: 0.78rem;
+  color: var(--accent-alt);
+  overflow-wrap: anywhere;
+}
+
+.pairing__input {
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--surface-border-strong);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+
+.pairing__input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.pairing__submit {
+  padding: 0.7rem 1rem;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--bg-void);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  transition: opacity var(--duration-fast) var(--ease);
+}
+
+.pairing__submit:disabled { opacity: 0.35; }
+
 /* ------------------------------------------------------------- animations */
 
 @keyframes fade-in {
@@ -1585,4 +1697,100 @@
   .clock { top: 1.25rem; left: 1.5rem; }
   .clock__hm { font-size: 1.7rem; }
   .conversation { bottom: 7vh; }
+}
+
+/*
+ * Small touch panels — an Echo Show 5 is 960×480, its bigger sibling 1280×800.
+ *
+ * Two things change on a screen this size, and neither is really about
+ * "smaller". The first is that every target has to be a fingertip rather than
+ * a cursor: 34 px is a comfortable click and a frustrating tap, so the corner
+ * controls grow even though nothing else does.
+ *
+ * The second is the settings panel. A 12 rem navigation column costs a fifth
+ * of the width and leaves the controls beside it too narrow to use, so the
+ * sections become a scrolling strip along the top instead — which is also the
+ * gesture a touchscreen is best at. Everything else here is just making sure
+ * nothing overlaps once there are only 480 px of height to share.
+ */
+@media (max-height: 560px) and (pointer: coarse), (max-height: 560px) and (max-width: 1100px) {
+  .clock { top: 0.9rem; left: 1.1rem; }
+  .clock__hm { font-size: 1.45rem; }
+  .clock__meta { font-size: 0.62rem; }
+
+  .conversation {
+    bottom: 5vh;
+    width: min(60ch, 88vw);
+    gap: 0.5rem;
+  }
+  .conversation__reply {
+    font-size: clamp(1rem, 2.6vh, 1.3rem);
+    line-height: 1.4;
+  }
+  .conversation__utterance { font-size: 0.72rem; }
+
+  /* A fingertip, not a cursor. */
+  .settings-trigger,
+  .mic-toggle {
+    width: 44px;
+    height: 44px;
+    bottom: 0.75rem;
+    opacity: 0.6;
+  }
+  .settings-trigger { right: 0.75rem; }
+  .mic-toggle { right: 3.6rem; }
+  .settings-trigger svg,
+  .mic-toggle svg { width: 20px; height: 20px; }
+
+  /* Nothing here is reachable by hover, so the cog must not rely on it. */
+  .settings-trigger:hover { transform: none; }
+
+  .settings { width: 100vw; }
+  .settings__header { padding: 0.9rem 1.1rem 0.75rem; }
+
+  .settings__body {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+
+  .settings__nav {
+    flex-direction: row;
+    gap: 0.35rem;
+    padding: 0.6rem 0.75rem;
+    border-right: none;
+    border-bottom: 1px solid var(--surface-border);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .settings__nav::-webkit-scrollbar { display: none; }
+
+  .settings__nav-item {
+    flex: 0 0 auto;
+    padding: 0.5rem 0.75rem;
+    white-space: nowrap;
+  }
+
+  /* A 1 px rule reads as a stray mark in a horizontal strip. */
+  .settings__nav-divider { display: none; }
+
+  .settings__content { padding: 1rem 1.1rem 1.5rem; }
+
+  .surface {
+    width: min(26rem, 52vw);
+    max-height: 84vh;
+  }
+  .surface__card { max-height: 84vh; }
+  /* Only the top slot needs pulling in — the mid-right one is centred by a
+     transform, and giving it a new `top` would drag it off-centre instead. */
+  .surface--slot-top-right { top: max(3rem, 8vh); }
+
+  .notifications { width: min(19rem, 46vw); }
+  .notifications--top-right,
+  .notifications--top-left,
+  .notifications--top-center { top: 0.9rem; }
+  .notifications--bottom-right,
+  .notifications--bottom-left { bottom: 0.9rem; }
+
+  .console { bottom: 0.9rem; }
 }

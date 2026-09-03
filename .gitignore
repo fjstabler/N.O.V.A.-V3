@@ -1,4 +1,7 @@
 # ---- Node / Electron ----
+# services/core/nova/webapp/static is build output too, but it is deliberately
+# committed: it is what the core serves at /app/, and a box running only the
+# Python service should not need a Node toolchain to put a screen on a wall.
 node_modules/
 dist/
 dist-electron/

@@ -13,8 +13,10 @@ Bus events are mirrored to every connected client. High-frequency topics
 back-pressured by a 100 Hz producer.
 
 Plain HTTP GETs on the same host:port (i.e. anything that isn't a WebSocket
-upgrade) are served the mobile web client's static files, so one process and
-one port covers both the desktop shell's WebSocket and a phone's browser tab.
+upgrade) are served static files, so one process and one port covers every
+client: the desktop shell's WebSocket, the lightweight phone client at `/`, and
+the full interface at `/app/` — the same React app the shell runs, built for a
+browser, which is what a wall panel loads.
 """
 
 from __future__ import annotations
@@ -53,6 +55,13 @@ except ImportError:  # pragma: no cover - hard dependency, guarded for clarity
 
 #: The mobile web client's built files: services/core/nova/mobile_web/static/.
 STATIC_ROOT = Path(__file__).resolve().parent.parent / "mobile_web" / "static"
+
+#: The full interface — the same React app the desktop shell runs, built for a
+#: browser by `npm run build:web` in apps/desktop. Served at `/app/` so the
+#: lightweight phone client keeps `/`: they are for different jobs, one a quick
+#: thing to talk to in a pocket, the other a panel that stays on a wall.
+APP_ROOT = Path(__file__).resolve().parent.parent / "webapp" / "static"
+APP_PREFIX = "/app"
 
 _CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -102,11 +111,50 @@ _CSP = (
     "connect-src 'self'; object-src 'none'; form-action 'none'; frame-ancestors 'none'"
 )
 
+#: The React app sets colour and geometry through inline style attributes — the
+#: Core's own theming works that way — so it needs 'unsafe-inline' for styles
+#: where the hand-written phone client does not. Scripts get no such licence on
+#: either, which is the half that matters.
+#:
+#: `connect-src 'self'` covers the WebSocket: CSP3 resolves 'self' to the
+#: origin's ws:// and wss:// forms, and the socket is always back to whatever
+#: host served the page.
+_APP_CSP = _CSP.replace("style-src 'self'", "style-src 'self' 'unsafe-inline'")
 
-def _add_security_headers(headers: Headers) -> None:
-    headers["Content-Security-Policy"] = _CSP
+
+def _add_security_headers(headers: Headers, csp: str = _CSP) -> None:
+    headers["Content-Security-Policy"] = csp
     headers["X-Content-Type-Options"] = "nosniff"
     headers["X-Frame-Options"] = "DENY"
+
+
+def route_static(url_path: str) -> tuple[Path, str, str]:
+    """Pick the root a request is served from, the path within it, and its policy.
+
+    Two clients share one port, so the prefix has to come off before the path
+    is looked up: `/app/assets/x.js` is a file called `assets/x.js` under the
+    app root, not one called `app/assets/x.js` under either.
+    """
+    if url_path == APP_PREFIX or url_path.startswith(APP_PREFIX + "/"):
+        return APP_ROOT, url_path[len(APP_PREFIX) :] or "/", _APP_CSP
+    return STATIC_ROOT, url_path, _CSP
+
+
+def _file_response(root: Path, url_path: str, csp: str = _CSP) -> Response:
+    """Serve one file from under `root`, or 404."""
+    path = resolve_static_path(root, url_path)
+    if path is None:
+        return Response(404, "Not Found", Headers(), b"not found")
+    body = path.read_bytes()
+    content_type = _CONTENT_TYPES.get(path.suffix) or (
+        mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    )
+    headers = Headers()
+    headers["Content-Type"] = content_type
+    headers["Content-Length"] = str(len(body))
+    headers["Cache-Control"] = "no-cache"
+    _add_security_headers(headers, csp)
+    return Response(200, "OK", headers, body)
 
 
 #: Topics never forwarded to the UI — internal plumbing or secrets.
@@ -193,19 +241,7 @@ class BridgeService(Service):
         url_path = urlsplit(request.path).path
         if url_path.startswith("/camera/"):
             return await self._camera_response(request, url_path)
-        path = resolve_static_path(STATIC_ROOT, request.path)
-        if path is None:
-            return Response(404, "Not Found", Headers(), b"not found")
-        body = path.read_bytes()
-        content_type = _CONTENT_TYPES.get(path.suffix) or (
-            mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-        )
-        headers = Headers()
-        headers["Content-Type"] = content_type
-        headers["Content-Length"] = str(len(body))
-        headers["Cache-Control"] = "no-cache"
-        _add_security_headers(headers)
-        return Response(200, "OK", headers, body)
+        return _file_response(*route_static(url_path))
 
     # ------------------------------------------------------------------ camera
 

@@ -1,5 +1,5 @@
 .PHONY: help setup setup-core setup-desktop wake models dev dev-core dev-desktop test test-core test-desktop \
-        lint lint-core lint-desktop typecheck protocol check build package clean
+        lint lint-core lint-desktop typecheck protocol check build build-web package clean
 
 PYTHON ?= python3
 VENV   := .venv
@@ -84,6 +84,9 @@ check: protocol lint test ## What CI runs
 
 build: ## Build the production shell bundle
 	cd $(DESKTOP) && npm run build
+
+build-web: ## Rebuild the browser bundle the core serves at /app/
+	cd $(DESKTOP) && npm run build:web
 
 package: ## Build an installable desktop application
 	cd $(DESKTOP) && npm run package

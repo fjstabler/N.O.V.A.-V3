@@ -12,11 +12,14 @@ import { Clock } from '@/components/Clock';
 import { Conversation } from '@/components/Conversation';
 import { Notifications } from '@/components/Notifications';
 import { NovaCore } from '@/components/NovaCore';
+import { Pairing } from '@/components/Pairing';
 import { SettingsPanel } from '@/components/SettingsPanel';
 import { ConnectionStatus, DeveloperReadout } from '@/components/StatusOverlay';
 import { Surface } from '@/components/Surface';
 import { TextConsole } from '@/components/TextConsole';
+import { RemoteAudio } from '@/components/RemoteAudio';
 import { BridgeClient, createDescriptorResolver } from '@/lib/bridge';
+import { claimTokenFromUrl, clearToken, isBrowser, storedToken } from '@/lib/session';
 import { useNova, wireBridge } from '@/state/store';
 
 export function App(): JSX.Element {
@@ -24,6 +27,12 @@ export function App(): JSX.Element {
   const clientRef = useRef<BridgeClient | null>(null);
   const theme = useNova((store) => store.settings?.appearance?.theme ?? 'nova-blue');
   const state = useNova((store) => store.state);
+  // Only ever true in a browser: the shell is handed a token over IPC.
+  const [needsPairing, setNeedsPairing] = useState(() => {
+    if (!isBrowser()) return false;
+    claimTokenFromUrl();
+    return !storedToken();
+  });
 
   // One bridge for the lifetime of the window.
   useEffect(() => {
@@ -38,9 +47,18 @@ export function App(): JSX.Element {
     const offBridgeReady = window.nova?.onBridgeReady(() => void bridge.connect());
     const offCoreExited = window.nova?.onCoreExited(() => void bridge.connect());
 
+    // A stored token the core no longer accepts is unrecoverable by retrying,
+    // and retrying it looks exactly like the core being down. Ask again.
+    const offRejected = bridge.onUnauthorised(() => {
+      if (!isBrowser()) return;
+      clearToken();
+      setNeedsPairing(true);
+    });
+
     return () => {
       offBridgeReady?.();
       offCoreExited?.();
+      offRejected();
       unwire();
       bridge.close();
       clientRef.current = null;
@@ -106,6 +124,17 @@ export function App(): JSX.Element {
     document.documentElement.dataset.state = state;
   }, [state]);
 
+  if (needsPairing) {
+    return (
+      <Pairing
+        onPaired={() => {
+          setNeedsPairing(false);
+          void clientRef.current?.connect();
+        }}
+      />
+    );
+  }
+
   return (
     <main className="stage">
       <NovaCore />
@@ -119,6 +148,7 @@ export function App(): JSX.Element {
       <Surface client={client} />
       <SettingsPanel client={client} />
       <TextConsole client={client} />
+      <RemoteAudio client={client} />
 
       <ConnectionStatus />
       <DeveloperReadout />
