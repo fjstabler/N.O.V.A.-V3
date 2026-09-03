@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Requests, Topics } from '@protocol';
 import type { BridgeClient } from '@/lib/bridge';
+import { isBrowser } from '@/lib/session';
 
 /** What the core's wake detector is trained on; anything else it cannot score. */
 const TARGET_RATE = 16000;
@@ -45,6 +46,9 @@ export function RemoteAudio({ client }: { client: BridgeClient | null }): JSX.El
   const sessionIdRef = useRef('');
   const capturingRef = useRef(true);
   const playerRef = useRef<HTMLAudioElement | null>(null);
+  // Set when the microphone is switched off by hand, so `?audio=1` does not
+  // immediately switch it back on and make the button look broken.
+  const stoppedByHand = useRef(false);
 
   const teardown = useCallback(() => {
     const session = sessionRef.current;
@@ -61,6 +65,7 @@ export function RemoteAudio({ client }: { client: BridgeClient | null }): JSX.El
 
   const start = useCallback(async () => {
     if (!client || sessionRef.current) return;
+    stoppedByHand.current = false;
     setStatus('starting');
 
     let stream: MediaStream;
@@ -127,6 +132,7 @@ export function RemoteAudio({ client }: { client: BridgeClient | null }): JSX.El
   }, [client]);
 
   const stop = useCallback(() => {
+    stoppedByHand.current = true;
     client?.request(Requests.AudioSourceDetach).catch(() => undefined);
     teardown();
     setStatus('off');
@@ -172,7 +178,7 @@ export function RemoteAudio({ client }: { client: BridgeClient | null }): JSX.El
   useEffect(() => {
     if (!client) return;
     const wanted = new URLSearchParams(window.location.search).get('audio') === '1';
-    if (wanted && status === 'off') void start();
+    if (wanted && status === 'off' && !stoppedByHand.current) void start();
   }, [client, status, start]);
 
   // Re-attach after the core restarts: the session it knew about is gone.
@@ -191,6 +197,11 @@ export function RemoteAudio({ client }: { client: BridgeClient | null }): JSX.El
   }, [client]);
 
   useEffect(() => teardown, [teardown]);
+
+  // The Electron shell runs on the machine holding the core's own sound card,
+  // so offering to lend it that same microphone over the network would be a
+  // confusing no-op. This is for the clients that have no other way in.
+  if (!isBrowser()) return null;
 
   if (status === 'live') {
     return (
