@@ -16,6 +16,12 @@ phone lends the core its microphone and speaker, and the wake word,
 transcription and synthesis all still run on the server. See
 [apps/panel/README.md](../apps/panel/README.md).
 
+> **You do not need to create a VM or container first.** `create-lxc.sh` makes
+> one — it is the command-line equivalent of clicking *Create CT* in the web
+> UI. If you would rather click through it yourself, see
+> [Doing it through the web UI instead](#doing-it-through-the-web-ui-instead);
+> the two paths meet at the same installer.
+
 ## Before you start
 
 - Proxmox VE 7 or 8, with room for 4 cores / 6 GB / 16 GB of disk
@@ -159,6 +165,75 @@ it with a static `IPV4`.
 
   The shell probes that address before falling back to starting its own, so
   keep the Ubuntu machine's local core stopped or it will win the port.
+
+## Doing it through the web UI instead
+
+`create-lxc.sh` creates the container for you — there is nothing to set up
+first. But if you would rather see it happen, or the script tripped on
+something about your host, this is the same thing done by hand. The installer
+in step 4 is identical either way.
+
+### 1. Download a Debian template
+
+In the left-hand tree: **your node → local → CT Templates**, then the
+**Templates** button. Search for `debian-12-standard`, select it, **Download**.
+
+About 120 MB. If `local` has no *CT Templates* entry, the storage does not have
+container templates enabled: **Datacenter → Storage → local → Edit**, and tick
+*Container template* under Content.
+
+### 2. Create the container
+
+**Create CT**, top right. The tabs, in order:
+
+| Tab | What to put |
+| --- | --- |
+| **General** | Hostname `nova`. Set a root **Password** — you need it to log in. Leave **Unprivileged container** and **Nesting** ticked. |
+| **Template** | Storage `local`, Template the Debian 12 one you just downloaded. |
+| **Disks** | `16` GiB. Storage is `local-lvm` on a stock install — whatever your other containers use. |
+| **CPU** | Cores `4`. |
+| **Memory** | Memory `6144` MiB, Swap `2048` MiB. |
+| **Network** | Bridge `vmbr0`. IPv4 **DHCP**. |
+| **DNS** | Leave blank — it uses the host's. |
+| **Confirm** | Tick **Start after created**, then **Finish**. |
+
+Nothing here is precious except the disk size. Memory can be changed later
+without rebuilding; 4096 MiB is the practical floor once Whisper and Kokoro are
+both loaded.
+
+### 3. Open its console
+
+Select the new container in the tree, then **Console**. Log in as `root` with
+the password you set.
+
+### 4. Install N.O.V.A. inside it
+
+```sh
+apt update && apt install -y git
+git clone https://github.com/fjstabler/N.O.V.A.-V3.git /opt/nova
+cd /opt/nova
+bash scripts/proxmox/install-nova.sh
+```
+
+If the repository is private, git asks for a username and password — the
+password is a GitHub personal access token, not your account password
+(**GitHub → Settings → Developer settings → Personal access tokens**).
+
+To bring your existing settings and memory across, get the export into the
+container first. From the **Proxmox host** shell, not the container's:
+
+```sh
+pct push <ctid> /root/nova-export-20260904-2130.tar.gz /root/nova-export.tar.gz
+```
+
+then in the container's console:
+
+```sh
+bash scripts/proxmox/install-nova.sh --restore /root/nova-export.tar.gz
+```
+
+It finishes by printing the address, token and pairing link, exactly as the
+scripted path does. Carry on from [step 3](#3-give-it-a-fixed-address).
 
 ## Settings worth checking on a CPU-only box
 
