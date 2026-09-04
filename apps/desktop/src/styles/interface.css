@@ -1793,4 +1793,34 @@
   .notifications--bottom-left { bottom: 0.9rem; }
 
   .console { bottom: 0.9rem; }
+
+  /*
+   * No backdrop blur on a panel.
+   *
+   * The settings drawer came up black on an Echo Show: it is the only
+   * full-screen element carrying one, at blur(38px), stacked on the scrim's
+   * own blur, composited over a WebGL canvas that never stops animating — on a
+   * device with a small GPU and a gigabyte of RAM shared with everything else,
+   * that is enough to lose the layer entirely. A black panel with no way to
+   * reach the settings is a worse failure than a flat one.
+   *
+   * It was also buying nothing here. These surfaces are full width or nearly
+   * so at this size, so there is almost no Core left behind them to show
+   * through. Opaque backgrounds replace the transparency the blur was making
+   * legible.
+   */
+  .settings,
+  .settings__scrim,
+  .panel,
+  .surface__card,
+  .console {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .settings { background: #0a1020; }
+  .settings__scrim { background: rgba(2, 4, 9, 0.72); }
+  .panel,
+  .console { background: #121a2c; }
+  .surface__card { background: #080d18; }
 }
