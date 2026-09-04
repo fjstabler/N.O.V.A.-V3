@@ -14,6 +14,7 @@ import asyncio
 import base64
 import contextlib
 import io
+import time
 import wave
 from typing import Any
 
@@ -456,3 +457,16 @@ async def test_a_stale_device_is_detached_by_the_watchdog(
 
     assert voice.remote_attached is False
     await quiesce(voice)
+
+
+async def test_the_hearing_report_cannot_stop_the_microphone(ctx: NovaContext) -> None:
+    """The report exists to explain why the wake word is not firing, so it must
+    not be able to cause that. It touches the wake detector, which in tests —
+    and in a half-loaded runtime — may not be a full one."""
+    voice = VoiceService(ctx)
+    voice.wake = AlwaysDetects()  # type: ignore[assignment]
+    voice._last_hearing_report = time.monotonic() - 3600  # force a report
+
+    voice._note_frame_heard()  # must not raise
+
+    assert voice._frames_heard == 0

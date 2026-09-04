@@ -192,7 +192,16 @@ class WakeWordDetector:
 
     @property
     def peak_score(self) -> float:
+        """Highest confidence since the last reset.
+
+        The difference between "nothing is reaching the microphone" and "the
+        phrase is heard but never quite clears the bar" is invisible from the
+        outside, and the two need opposite fixes.
+        """
         return self._peak
+
+    def reset_peak(self) -> None:
+        self._peak = 0.0
 
     def unload(self) -> None:
         """Release the model. The detector then scores nothing."""

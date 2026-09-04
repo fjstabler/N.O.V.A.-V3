@@ -101,6 +101,8 @@ class VoiceService(Service):
         self._endpointer: Endpointer | None = None
         self._speech_queue: asyncio.Queue[str] = asyncio.Queue()
         self._degraded: dict[str, str] = {}
+        self._frames_heard = 0
+        self._last_hearing_report = 0.0
         self._capture_started = 0.0
 
     # -------------------------------------------------------------- lifecycle
@@ -280,10 +282,14 @@ class VoiceService(Service):
 
     # ------------------------------------------------------------- listen loop
 
+    #: How often to report what the wake detector is hearing.
+    _HEARING_REPORT_SECONDS = 20.0
+
     async def _listen_loop(self) -> None:
         async for frame in self.input.frames():
             if not frame:
                 continue  # idle tick from the capture-queue timeout
+            self._note_frame_heard()
             try:
                 await self._on_frame(frame)
             except asyncio.CancelledError:
@@ -294,6 +300,44 @@ class VoiceService(Service):
                 self.log.exception("frame_processing_failed")
                 self._reset_capture()
                 await self._return_to_idle()
+
+    def _note_frame_heard(self) -> None:
+        """Periodically say what the microphone is actually delivering.
+
+        "The wake word does not work" has three completely different causes and
+        no way to tell them apart from outside: no audio arriving at all, audio
+        arriving but silent, or audio that is fine and simply never scores high
+        enough. Each needs a different fix and they are indistinguishable
+        without numbers, so this prints them rather than leaving anyone to
+        guess — which is otherwise a long conversation with a device that has
+        no console.
+        """
+        self._frames_heard += 1
+        now = time.monotonic()
+        if self._last_hearing_report == 0.0:
+            # First frame: start the clock rather than reporting a window that
+            # has not happened yet.
+            self._last_hearing_report = now
+            return
+        if now - self._last_hearing_report < self._HEARING_REPORT_SECONDS:
+            return
+        self._last_hearing_report = now
+        frames, self._frames_heard = self._frames_heard, 0
+
+        # A diagnostic must never be the thing that stops the microphone. This
+        # runs on every frame in the listening path, so anything it touches —
+        # including a wake detector swapped out for a stub — has to be unable
+        # to break the loop it exists to explain.
+        with contextlib.suppress(Exception):
+            self.log.info(
+                "wake_listening",
+                frames=frames,
+                peak_wake_score=round(self.wake.peak_score, 3),
+                threshold=round(1.0 - self.ctx.settings.voice.wake.sensitivity, 3),
+                listening_for=self.wake.active_model,
+                source="remote" if self._remote is not None else "local",
+            )
+            self.wake.reset_peak()
 
     async def _on_frame(self, frame: bytes) -> None:
         if self._state is ListenState.SUSPENDED:
