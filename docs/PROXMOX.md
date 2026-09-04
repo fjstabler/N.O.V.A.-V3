@@ -28,6 +28,48 @@ demands, and a container boots in seconds and gives back the memory it is not
 using. A VM works identically if you prefer one — skip to
 [By hand, or on a VM](#by-hand-or-on-a-vm).
 
+## 0. Prepare the Proxmox host
+
+### Get a shell on it
+
+Either SSH in as root, or use the web UI: **Datacenter → your node → Shell**.
+The web console is a real root shell and is the simpler option if you have not
+set up SSH keys.
+
+Everything below runs on the Proxmox host itself, not on a container and not on
+your desktop.
+
+### Put a checkout on it
+
+Proxmox does not ship git:
+
+```sh
+apt update && apt install -y git
+cd /root
+git clone https://github.com/fjstabler/N.O.V.A.-V3.git
+cd N.O.V.A.-V3
+```
+
+A private repository will ask for credentials. A personal access token as the
+password works, or clone it on your laptop and `scp -r` the directory to
+`/root/` instead — the create script only needs the files, not the remote.
+
+### Check the host before building anything
+
+```sh
+./scripts/proxmox/preflight.sh
+```
+
+It changes nothing. It reports the Proxmox version, free cores and memory,
+which storages can actually hold a container disk and how much room they have,
+whether a Debian template is already downloaded, which bridge to attach to, and
+whether it can see an export to restore. It finishes by printing the exact
+create command for **your** host, with any overrides already filled in.
+
+This exists mainly because of the storage name. It is `local-lvm` on a stock
+install, but anything with ZFS or a second disk will call it something else,
+and that is the usual reason a first attempt fails.
+
 ## 1. Take your settings and memory with you
 
 On the machine N.O.V.A. runs on now:
@@ -57,7 +99,7 @@ that keeps a copy, and delete it once it is restored.
 
 ## 2. Build the container
 
-On the Proxmox host, from the checkout:
+On the Proxmox host, from the checkout — run whatever `preflight.sh` printed:
 
 ```sh
 ./scripts/proxmox/create-lxc.sh --restore /root/nova-export-*.tar.gz
