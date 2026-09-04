@@ -125,6 +125,16 @@ class VoiceService(Service):
             # one does, synthesis and typed input still work.
             self._degraded["microphone"] = exc.reason
             self.log.warning("microphone_unavailable", reason=exc.reason)
+        except Exception as exc:  # noqa: BLE001 - see below
+            # PortAudio does not raise our exception type, and a container has
+            # no /dev/snd for it to open, so it fails with an error of its own.
+            # That escaped the clause above and took the whole voice service
+            # down — which is worse than it sounds, because the recovery for
+            # having no local microphone is a panel attaching one over the
+            # network, and that request is answered by this very service. Every
+            # panel offering its microphone was told voice was unavailable.
+            self._degraded["microphone"] = str(exc)
+            self.log.warning("microphone_unavailable", reason=str(exc))
         else:
             self._local_microphone = True
             self._start_capture_loops()

@@ -470,3 +470,33 @@ async def test_the_hearing_report_cannot_stop_the_microphone(ctx: NovaContext) -
     voice._note_frame_heard()  # must not raise
 
     assert voice._frames_heard == 0
+
+
+async def test_a_sound_card_that_fails_its_own_way_does_not_take_voice_down(
+    ctx: NovaContext,
+) -> None:
+    """The reason a panel exists is to lend a microphone to a machine that has
+    none — so a machine with none must stay able to accept the offer.
+
+    PortAudio raises its own error type, not DegradedCapability, and a container
+    has no /dev/snd for it to open. That escaped the microphone guard and failed
+    the whole service, so `audio.source.attach` answered "voice is unavailable"
+    to every panel: the one path that fixes a missing microphone, closed by the
+    missing microphone.
+    """
+    voice = VoiceService(ctx)
+
+    def explode() -> None:
+        raise OSError("PortAudioError: Error querying device -1")
+
+    voice._local_input.start = explode  # type: ignore[method-assign]
+
+    await voice.start()
+
+    assert voice.running, "a missing sound card must not fail the service"
+    assert "microphone" in voice._degraded
+
+    # …and the remote path, which is the entire point, still works.
+    attached = await voice.attach_remote()
+    assert attached["sessionId"]
+    await voice.stop()
