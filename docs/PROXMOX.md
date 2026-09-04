@@ -54,7 +54,12 @@ apt update && apt install -y git
 cd /root
 git clone https://github.com/fjstabler/N.O.V.A.-V3.git
 cd N.O.V.A.-V3
+ls scripts/proxmox/     # create-lxc.sh, install-nova.sh, preflight.sh
 ```
+
+If that directory is missing, `git clone` checked out a branch that predates
+these scripts. `git branch -a` lists what the remote has; `git checkout <branch>`
+switches to the one you want.
 
 A private repository will ask for credentials. A personal access token as the
 password works, or clone it on your laptop and `scp -r` the directory to
@@ -214,6 +219,10 @@ git clone https://github.com/fjstabler/N.O.V.A.-V3.git /opt/nova
 cd /opt/nova
 bash scripts/proxmox/install-nova.sh
 ```
+
+`ls scripts/proxmox/` should list three files. If it says the directory does not
+exist, the clone gave you a branch that predates these scripts — `git branch -a`
+to see what is there, then `git checkout <branch>` and try again.
 
 If the repository is private, git asks for a username and password — the
 password is a GitHub personal access token, not your account password
