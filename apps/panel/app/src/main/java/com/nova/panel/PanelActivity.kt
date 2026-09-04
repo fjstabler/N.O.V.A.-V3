@@ -2,7 +2,10 @@ package com.nova.panel
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
@@ -48,10 +51,23 @@ class PanelActivity : AppCompatActivity() {
 
     private val requestMicrophone =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            // A refusal is survivable: the panel is still a display, and the
-            // settings screen can still be reached to change its mind.
-            if (granted && prefs.microphone) AudioService.start(this)
+            // A refusal is survivable: the panel is still a display. But it must
+            // say so, because a panel that cannot hear looks exactly like one
+            // that is listening and unimpressed.
+            if (granted && prefs.microphone) {
+                binding.status.visibility = View.GONE
+                AudioService.start(this)
+            } else if (!granted) {
+                showStatus(getString(R.string.audio_no_permission))
+            }
         }
+
+    /** The audio service saying, on screen, why it cannot hear. */
+    private val audioStatus = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            intent.getStringExtra(AudioService.EXTRA_STATUS)?.let(::showStatus)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -83,7 +99,30 @@ class PanelActivity : AppCompatActivity() {
         })
 
         wireEscapeHatch()
+
+        // Tapping the message asks again, which is the only route back for
+        // someone who declined the permission on a device with no keyboard.
+        binding.status.setOnClickListener {
+            binding.status.visibility = View.GONE
+            ensureAudio()
+        }
+
         ensureAudio()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        ContextCompat.registerReceiver(
+            this,
+            audioStatus,
+            IntentFilter(AudioService.ACTION_STATUS),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+    }
+
+    override fun onStop() {
+        super.onStop()
+        runCatching { unregisterReceiver(audioStatus) }
     }
 
     /**
@@ -219,8 +258,10 @@ class PanelActivity : AppCompatActivity() {
     }
 
     private fun showStatus(text: String) {
-        binding.status.text = text
-        binding.status.visibility = View.VISIBLE
+        runOnUiThread {
+            binding.status.text = text
+            binding.status.visibility = View.VISIBLE
+        }
     }
 
     // ------------------------------------------------------------------ audio

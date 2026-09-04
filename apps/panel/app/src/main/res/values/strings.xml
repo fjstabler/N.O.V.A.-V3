@@ -15,4 +15,6 @@
     <string name="panel_settings">Panel settings</string>
     <string name="pair_need_host">Enter the address of the machine running the core.</string>
     <string name="pair_need_token">Enter the bridge token — see the note above.</string>
+    <string name="audio_no_permission">No microphone permission — N.O.V.A. can show things but cannot hear you. Tap to grant it.</string>
+    <string name="audio_no_foreground">Android refused the microphone service. Check the microphone permission in Settings → Apps → N.O.V.A.</string>
 </resources>

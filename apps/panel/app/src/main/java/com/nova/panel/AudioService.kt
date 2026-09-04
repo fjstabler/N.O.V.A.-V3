@@ -64,6 +64,17 @@ class AudioService : Service(), BridgeSocket.Events {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /**
+     * Put a sentence where someone standing in front of the panel can read it.
+     *
+     * A wall panel has no console and no way to reach logcat, so a microphone
+     * that silently never starts is indistinguishable from one that is working
+     * and simply not hearing anything.
+     */
+    private fun report(message: String) {
+        sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).putExtra(EXTRA_STATUS, message))
+    }
+
     override fun onCreate() {
         super.onCreate()
         prefs = Prefs(this)
@@ -71,6 +82,24 @@ class AudioService : Service(), BridgeSocket.Events {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // `startForegroundService` promised the system a `startForeground` within
+        // a few seconds, and every path out of here has to honour it — including
+        // the ones that decide not to run. Returning without it does not quietly
+        // decline; it kills the app, and because this service is START_STICKY the
+        // system brings it back to do the same thing again. That loop is
+        // completely silent from the outside: no notification, no microphone, and
+        // nothing in any log the owner of the device can reach.
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification())
+        } catch (e: Exception) {
+            // Android 14 refuses a microphone-typed foreground service outright
+            // when RECORD_AUDIO is not held.
+            Log.e(TAG, "could not start in the foreground", e)
+            report(getString(R.string.audio_no_foreground))
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         if (running) return START_STICKY
         if (!prefs.configured || !prefs.microphone) {
             stopSelf()
@@ -80,11 +109,11 @@ class AudioService : Service(), BridgeSocket.Events {
             != PackageManager.PERMISSION_GRANTED
         ) {
             Log.w(TAG, "no microphone permission; not starting")
+            report(getString(R.string.audio_no_permission))
             stopSelf()
             return START_NOT_STICKY
         }
 
-        startForeground(NOTIFICATION_ID, buildNotification())
         acquireWakeLock()
         running = true
         bridge = BridgeSocket(prefs.socketUrl(), this).also { it.connect() }
@@ -413,7 +442,20 @@ class AudioService : Service(), BridgeSocket.Events {
         private const val FMT = 0x20746d66 // "fmt "
         private const val DATA = 0x61746164 // "data"
 
+        /** Broadcast so the panel can say on screen why it cannot hear. */
+        const val ACTION_STATUS = "com.nova.panel.AUDIO_STATUS"
+        const val EXTRA_STATUS = "status"
+
         fun start(context: Context) {
+            // Checked here as well as in the service: making the promise at all
+            // when it cannot be kept is what turns a declined permission into a
+            // crash loop.
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.w(TAG, "not starting: no microphone permission")
+                return
+            }
             val intent = Intent(context, AudioService::class.java)
             ContextCompat.startForegroundService(context, intent)
         }
