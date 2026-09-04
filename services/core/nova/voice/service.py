@@ -178,7 +178,18 @@ class VoiceService(Service):
         if self._degraded:
             return "degraded: " + ", ".join(f"{k} ({v})" for k, v in self._degraded.items())
         where = "remote mic" if self._remote is not None else "local mic"
-        return f"{self.transcriber.model_size} on {self.transcriber.resolved_device} · {where}"
+        base = f"{self.transcriber.model_size} on {self.transcriber.resolved_device} · {where}"
+        # A substituted wake phrase is the one piece of status nobody can guess
+        # from the outside: the assistant is listening perfectly well, just not
+        # for the words the settings page says it is.
+        if self.wake.loaded and self.wake.active_model != self.wake.model_name:
+            base += f' · saying "{_spoken(self.wake.active_model)}" wakes it'
+        return base
+
+    @property
+    def wake_phrase(self) -> str:
+        """The phrase that actually wakes it, spoken as a person would say it."""
+        return _spoken(self.wake.active_model)
 
     @property
     def capabilities(self) -> dict[str, bool]:
@@ -667,3 +678,16 @@ def _drain_queue(queue_: asyncio.Queue[Any]) -> None:
             queue_.task_done()
         except (asyncio.QueueEmpty, ValueError):
             return
+
+
+def _spoken(model_name: str) -> str:
+    """Turn a model name into the words someone would actually say.
+
+    `hey_jarvis` is not a phrase anyone speaks, and a status line that prints it
+    verbatim asks the reader to work out the translation themselves. A path to a
+    trained model keeps its stem for the same reason.
+    """
+    stem = model_name.rsplit("/", 1)[-1]
+    if stem.endswith(".onnx"):
+        stem = stem[: -len(".onnx")]
+    return stem.replace("_", " ").strip()

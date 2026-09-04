@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from nova.voice.wake import WakeWordDetector
+from nova.voice.service import _spoken
+from nova.voice.wake import FALLBACK_PHRASES, WakeWordDetector, _is_available
 
 
 class FakeModel:
@@ -120,3 +121,84 @@ def test_the_shipped_default_is_three_consecutive_frames() -> None:
     actually-spoken "Hey Nova" holds a high score for."""
     detector = WakeWordDetector("hey_nova.onnx", sensitivity=0.55, models_dir=None)
     assert detector.consecutive_frames == 3
+
+
+# ------------------------------------------------------- choosing a model
+
+
+class FakeModelFactory:
+    """openWakeWord's Model, as far as loading is concerned."""
+
+    def __init__(self, loadable: set[str]) -> None:
+        self.loadable = loadable
+        self.asked: list[str] = []
+
+    def __call__(self, *, wakeword_models: list[str], inference_framework: str) -> Any:
+        name = wakeword_models[0]
+        self.asked.append(name)
+        if name not in self.loadable:
+            raise ValueError(f"Could not find pretrained model for model name '{name}'")
+        return FakeModel(0.0)
+
+
+def test_a_phrase_that_exists_is_never_substituted() -> None:
+    """Availability is what decides, so a configured phrase the library has is
+    loaded as asked and the fallback list is never consulted."""
+    available = ["alexa_v0.1", "hey_jarvis_v0.1"]
+
+    assert _is_available("alexa", available)
+
+    detector = WakeWordDetector("alexa")
+    assert detector.active_model == "alexa"
+
+
+def test_the_default_phrase_has_no_model_and_must_fall_back() -> None:
+    """`hey_nova` is the shipped default and openWakeWord does not have it, so
+    a fresh install could not be spoken to at all — the assistant came up with
+    a microphone that would never trigger."""
+    available = ["alexa_v0.1", "hey_jarvis_v0.1", "hey_mycroft_v0.1", "hey_rhasspy_v0.1"]
+
+    assert not _is_available("hey_nova", available)
+
+    detector = WakeWordDetector("hey_nova")
+    substitute = detector._load_fallback(FakeModelFactory(set(FALLBACK_PHRASES)), available)
+
+    assert substitute == "hey_jarvis"
+
+
+def test_a_version_suffix_still_counts_as_available() -> None:
+    """The listing says `hey_jarvis_v0.1`; the loader wants `hey_jarvis`.
+    Comparing them directly would report every bundled phrase as missing."""
+    assert _is_available("hey_jarvis", ["hey_jarvis_v0.1"])
+    assert not _is_available("hey_jarvis_extra", ["hey_jarvis_v0.1"])
+
+
+def test_an_unreadable_inventory_does_not_declare_everything_missing() -> None:
+    """An empty list means the models directory could not be read, which is not
+    the same as it being empty — substituting on that basis would replace a
+    working phrase with a fallback for no reason."""
+    assert _is_available("hey_nova", [])
+
+
+def test_fallbacks_are_tried_in_order_until_one_loads() -> None:
+    available = ["hey_mycroft_v0.1", "alexa_v0.1"]
+    factory = FakeModelFactory({"alexa"})
+
+    detector = WakeWordDetector("hey_nova")
+    substitute = detector._load_fallback(factory, available)
+
+    # hey_jarvis is not present, hey_mycroft is listed but fails to load, so
+    # alexa is the first that actually works.
+    assert substitute == "alexa"
+    assert factory.asked == ["hey_mycroft", "alexa"]
+
+
+def test_no_usable_phrase_at_all_is_still_an_error() -> None:
+    detector = WakeWordDetector("hey_nova")
+    assert detector._load_fallback(FakeModelFactory(set()), ["hey_jarvis_v0.1"]) is None
+
+
+def test_a_model_name_is_reported_as_words_a_person_would_say() -> None:
+    assert _spoken("hey_jarvis") == "hey jarvis"
+    assert _spoken("/var/lib/nova/models/hey_nova.onnx") == "hey nova"
+    assert _spoken("alexa") == "alexa"

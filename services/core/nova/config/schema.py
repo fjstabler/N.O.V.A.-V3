@@ -77,7 +77,14 @@ class AnthropicSettings(BaseModel):
 class WakeWordSettings(BaseModel):
     enabled: bool = True
     phrase: str = Field(default="hey nova", description="Spoken activation phrase")
-    model: str = Field(default="hey_nova", description="openWakeWord model name or .onnx path")
+    model: str = Field(
+        default="hey_nova",
+        description="openWakeWord phrase or .onnx path. openWakeWord ships only "
+        "hey_jarvis, hey_mycroft, hey_rhasspy and alexa — anything else, including "
+        "the 'hey_nova' default, needs a trained model. Until there is one, the "
+        "closest bundled phrase is substituted and the Voice status line says which "
+        "one is live.",
+    )
     sensitivity: float = Field(
         default=0.55, ge=0.05, le=0.95, description="Higher = easier to trigger"
     )

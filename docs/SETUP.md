@@ -51,6 +51,31 @@ the install fails. Because pip installs an extra atomically, bundling it with
 the rest would take the microphone down with it. Split out, everything else
 installs and push-to-talk works regardless.
 
+### Which phrase wakes it
+
+openWakeWord ships models for exactly four phrases:
+
+| | |
+| --- | --- |
+| `hey_jarvis` | the default substitute — an assistant, not a brand |
+| `hey_mycroft` | |
+| `hey_rhasspy` | |
+| `alexa` | |
+
+**"Hey Nova" is not one of them.** The setting defaults to `hey_nova` because
+that is the phrase worth having, but no such model exists to download — so
+until one is trained, the closest bundled phrase is loaded instead and the
+Voice status line says which one is live. Out of the box, **"hey Jarvis" is
+what wakes it.**
+
+To pick a different one, set **Voice → wake word model** to any name above.
+
+To have it actually answer to "hey Nova", train a model with
+[openWakeWord's automatic training notebook](https://github.com/dscripka/openWakeWord#training-new-models)
+— it synthesises its own speech samples, so it needs no recordings of you, but
+it does want an hour and ideally a GPU. Put the resulting `.onnx` in
+`models/` under the data directory and set the wake word model to its filename.
+
 **Python 3.11–3.13 is the sweet spot.** The base service runs on 3.14, but
 parts of the ML ecosystem do not yet. If `[wake]` will not install, that is
 why.

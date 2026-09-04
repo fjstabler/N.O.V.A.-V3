@@ -28,6 +28,18 @@ log = get_logger(__name__)
 #: real detector actually gets built with.
 DEFAULT_CONSECUTIVE_FRAMES = 3
 
+#: What to answer to when the configured phrase has no model.
+#:
+#: openWakeWord ships four phrases, and "hey nova" is not among them — training
+#: one is a real job, so the default names a phrase that cannot load on a fresh
+#: install. Refusing to listen at all is the worst of the options: it leaves an
+#: assistant that cannot be spoken to, and the reason is a line in a log nobody
+#: is reading. Substituting a phrase that does exist at least leaves a working
+#: microphone, provided it is impossible to miss which phrase is live.
+#:
+#: Ordered by how well each suits a personal assistant.
+FALLBACK_PHRASES = ("hey_jarvis", "hey_mycroft", "hey_rhasspy", "alexa")
+
 
 class WakeWordDetector:
     """Scores audio frames against a wake word model."""
@@ -46,6 +58,9 @@ class WakeWordDetector:
         self.cooldown = cooldown
         self.consecutive_frames = consecutive_frames
         self.models_dir = models_dir
+        #: The phrase actually loaded. Differs from `model_name` when the
+        #: configured one had no model and a fallback was substituted.
+        self.active_model = model
         self._model: Any = None
         self._last_detection = 0.0
         self._streak = 0
@@ -68,39 +83,57 @@ class WakeWordDetector:
 
         candidate = Path(self.model_name)
         if candidate.suffix == ".onnx":
+            # A path the user chose themselves is not something to second-guess.
             if not candidate.is_absolute() and self.models_dir is not None:
                 candidate = self.models_dir / candidate
             if not candidate.exists():
                 raise MissingModel("wake word", str(candidate))
-            paths = [str(candidate)]
-        else:
-            # A bundled model name, e.g. "hey_jarvis" or "alexa".
-            paths = [self.model_name]
+            self._model = Model(wakeword_models=[str(candidate)], inference_framework="onnx")
+            self.active_model = self.model_name
+            return
 
-        try:
-            self._model = Model(wakeword_models=paths, inference_framework="onnx")
-        except Exception as exc:
-            # The single most common first-run failure is naming a phrase that
-            # openWakeWord does not ship. Say so, and say what it does ship —
-            # the raw library error names neither.
-            available = _bundled_models()
+        # A bundled name, e.g. "hey_jarvis". Ask the library what it has rather
+        # than reading the failure: openWakeWord says "Could not find pretrained
+        # model for model name 'x'", which matched none of the phrases the old
+        # code searched for, so the helpful branch never actually ran.
+        available = _bundled_models()
+        if _is_available(self.model_name, available):
+            self._model = Model(wakeword_models=[self.model_name], inference_framework="onnx")
+            self.active_model = self.model_name
+            return
+
+        substitute = self._load_fallback(Model, available)
+        if substitute is None:
             hint = f"available phrases: {', '.join(available)}" if available else ""
-            message = str(exc).lower()
-            if candidate.suffix != ".onnx" and (
-                "download" in message
-                or "no such file" in message
-                or "not found" in message
-                or "key" in message
-            ):
-                raise MissingModel(
-                    "wake word",
-                    f"'{self.model_name}' is not a bundled openWakeWord phrase. "
-                    f"Either train one and point voice.wake.model at the .onnx file, "
-                    f"or pick a bundled phrase in settings" + (f" — {hint}" if hint else ""),
-                ) from exc
-            if "download" in message or "no such file" in message:
-                raise MissingModel("wake word", self.model_name) from exc
-            raise
+            raise MissingModel(
+                "wake word",
+                f"'{self.model_name}' is not a bundled openWakeWord phrase, and no "
+                f"fallback loaded either. Either train one and point voice.wake.model "
+                f"at the .onnx file, or pick a bundled phrase in settings"
+                + (f" — {hint}" if hint else ""),
+            )
+
+        self.active_model = substitute
+        log.warning(
+            "wake_word_substituted",
+            requested=self.model_name,
+            listening_for=substitute,
+            reason=f"openWakeWord ships no '{self.model_name}' model",
+            remedy="train one and point voice.wake.model at its .onnx file, or set "
+            "voice.wake.model to a bundled phrase to silence this",
+        )
+
+    def _load_fallback(self, model_factory: Any, available: list[str]) -> str | None:
+        """Load the first bundled phrase that works, or None if none do."""
+        for phrase in FALLBACK_PHRASES:
+            if not _is_available(phrase, available):
+                continue
+            try:
+                self._model = model_factory(wakeword_models=[phrase], inference_framework="onnx")
+            except Exception:  # noqa: BLE001 - try the next one
+                continue
+            return phrase
+        return None
 
     def process(self, frame: bytes) -> float:
         """Score one 80 ms frame. Returns the highest wake-word confidence."""
@@ -180,6 +213,19 @@ class WakeWordDetector:
             self.cooldown = cooldown
         if consecutive_frames is not None:
             self.consecutive_frames = consecutive_frames
+
+
+def _is_available(phrase: str, available: list[str]) -> bool:
+    """Whether openWakeWord ships a model for `phrase`.
+
+    The listing carries version suffixes — `hey_jarvis_v0.1` — while the loader
+    wants the bare name, so this matches on the stem. An empty listing means the
+    inventory could not be read, not that nothing is installed; in that case say
+    yes and let the load attempt be the judge.
+    """
+    if not available:
+        return True
+    return any(name == phrase or name.startswith(f"{phrase}_") for name in available)
 
 
 def _bundled_models() -> list[str]:
