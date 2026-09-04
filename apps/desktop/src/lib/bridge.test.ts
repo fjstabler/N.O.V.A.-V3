@@ -41,6 +41,12 @@ class FakeSocket {
     this.fire('close', { code: 1000 });
   }
 
+  /** How the core turns away a token it does not accept. */
+  reject(): void {
+    this.readyState = 3;
+    this.fire('close', { code: 4401 });
+  }
+
   /** Test helpers. */
   open(): void {
     this.readyState = FakeSocket.OPEN;
@@ -225,6 +231,79 @@ describe('descriptor resolution', () => {
     expect(await createDescriptorResolver()()).toBeNull();
     expect(error).not.toHaveBeenCalled();
     error.mockRestore();
+  });
+});
+
+describe('a refused token', () => {
+  it('tells the UI once', async () => {
+    const client = makeClient();
+    let rejections = 0;
+    client.onUnauthorised(() => (rejections += 1));
+    await client.connect();
+    FakeSocket.instances.at(-1)!.reject();
+
+    expect(rejections).toBe(1);
+    client.close();
+  });
+
+  /**
+   * Regression, and a miserable one to diagnose from the outside: retrying a
+   * token the core has already refused is not merely wasteful. Every rejection
+   * clears the stored token, so a retry loop running while someone types a
+   * replacement destroys the value they are about to fix it with — the pairing
+   * screen reappears the instant they submit, forever.
+   */
+  it('does not retry, because the answer will not change', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = makeClient();
+      await client.connect();
+      const opened = FakeSocket.instances.length;
+      FakeSocket.instances.at(-1)!.reject();
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(FakeSocket.instances.length).toBe(opened);
+      client.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still reconnects when the core merely went away', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = makeClient();
+      await client.connect();
+      const opened = FakeSocket.instances.length;
+      FakeSocket.instances.at(-1)!.close(); // an ordinary 1000
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(FakeSocket.instances.length).toBeGreaterThan(opened);
+      client.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * The other half of the same bug: a socket abandoned by a newer connect()
+   * must not be able to report its own failure as this connection's.
+   */
+  it('ignores the death of a socket it has already replaced', async () => {
+    const client = makeClient();
+    let rejections = 0;
+    client.onUnauthorised(() => (rejections += 1));
+
+    await client.connect();
+    const stale = FakeSocket.instances.at(-1)!;
+
+    await client.connect(); // a new token was entered
+    stale.reject(); // the old attempt lands late
+
+    expect(rejections).toBe(0);
+    client.close();
   });
 });
 

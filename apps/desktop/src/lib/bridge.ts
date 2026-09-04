@@ -64,6 +64,23 @@ export class BridgeClient {
     if (this.closed) return;
     this.clearReconnect();
 
+    // Abandon whatever came before. A socket from an earlier attempt is about
+    // to fail with credentials that are no longer current, and its close event
+    // would otherwise be applied to this one — which is how a freshly typed
+    // token got wiped by the rejection of the token it replaced.
+    const previous = this.socket;
+    this.socket = null;
+    if (previous) {
+      previous.onclose = null;
+      previous.onerror = null;
+      previous.onmessage = null;
+      try {
+        previous.close();
+      } catch {
+        /* already gone */
+      }
+    }
+
     const descriptor = await this.resolveDescriptor().catch(() => null);
     if (!descriptor) {
       this.setState(this.attempt === 0 ? 'connecting' : 'reconnecting');
@@ -79,15 +96,21 @@ export class BridgeClient {
     try {
       const socket = new WebSocket(url);
       this.socket = socket;
+      /** Events from a socket we have already moved on from say nothing. */
+      const current = () => this.socket === socket;
 
       socket.addEventListener('open', () => {
+        if (!current()) return;
         this.attempt = 0;
         this.setState('connected');
       });
 
-      socket.addEventListener('message', (event) => this.handleMessage(event.data));
+      socket.addEventListener('message', (event) => {
+        if (current()) this.handleMessage(event.data);
+      });
 
       socket.addEventListener('close', (event) => {
+        if (!current()) return;
         this.socket = null;
         this.failPending(new BridgeError('connection closed', 'nova.disconnected'));
         if (this.closed) return;
@@ -98,7 +121,13 @@ export class BridgeClient {
         // let the UI ask for a new one.
         if (event.code === 4401) {
           console.warn('[bridge] token rejected');
+          this.setState('offline');
           for (const handler of this.rejectionHandlers) handler();
+          // No reconnect. A token the core has already refused will be refused
+          // again, and retrying it does more than waste a socket: every retry
+          // clears the stored token, so a loop running while someone types a
+          // replacement throws away the one they were about to fix it with.
+          return;
         }
         this.setState('reconnecting');
         this.scheduleReconnect();
