@@ -14,8 +14,11 @@ vanish, no `tool_invoked`, no reply, no error.
 
 from __future__ import annotations
 
+from typing import Any
+
 from nova.context import NovaContext
-from nova.runtime import NovaState
+from nova.runtime import NovaState, Topics
+from nova.voice.audio import FRAME_SAMPLES
 from nova.voice.service import ListenState, VoiceService
 
 
@@ -100,3 +103,33 @@ async def test_changing_consecutive_frames_updates_the_live_detector(
     voice._on_settings_changed(settings, {"voice.wake.consecutive_frames": 6})
 
     assert voice.wake.consecutive_frames == 6
+
+
+async def test_it_says_so_rather_than_discarding_speech_it_cannot_transcribe(
+    ctx: NovaContext,
+) -> None:
+    """Waking, listening and then going quiet is indistinguishable from being
+    ignored. Someone whose Whisper model had not loaded got exactly that: the
+    wake word fired, the Core lit up, and every sentence after it vanished
+    without a word."""
+    voice = VoiceService(ctx)
+    voice._degraded["transcription"] = "model download failed"
+    assert not voice.transcriber.loaded
+
+    notices: list[dict[str, Any]] = []
+    ctx.bus.subscribe(Topics.NOTIFICATION, lambda event: notices.append(event.payload))
+
+    voice._buffer.extend(b"\x01\x02" * FRAME_SAMPLES * 8)
+    voice._endpointer = _SpeechHeard()  # type: ignore[assignment]
+
+    await voice._finish_capture()
+
+    assert notices, "the user has to be told, not just the log"
+    assert "model download failed" in notices[0]["body"]
+    assert not voice._speech_queue.empty(), "and told aloud, where there is a voice"
+
+
+class _SpeechHeard:
+    """An endpointer that reports it captured speech."""
+
+    had_speech = True

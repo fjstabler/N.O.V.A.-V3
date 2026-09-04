@@ -420,7 +420,27 @@ class VoiceService(Service):
             return
 
         if not self.transcriber.loaded:
-            self.log.info("transcription_unavailable_discarding_audio")
+            reason = self._degraded.get("transcription", "transcription is unavailable")
+            self.log.warning("transcription_unavailable_discarding_audio", reason=reason)
+            # Waking, listening, and then going quiet is indistinguishable from
+            # being ignored — and it was, for someone whose Whisper model had
+            # not loaded: the wake word fired, the Core lit up, and every
+            # sentence after it went nowhere without a word of explanation.
+            self.bus.publish(
+                Topics.NOTIFICATION,
+                {
+                    "level": "warning",
+                    "title": "I heard you, but I cannot transcribe",
+                    "body": reason,
+                    "icon": "alert",
+                    "source": "voice",
+                    "timeout": 10.0,
+                },
+                source=self.name,
+            )
+            # Says it aloud where there is a voice, and puts the words on screen
+            # where there is not — `_speak_now` publishes the text either way.
+            await self.speak("I heard you, but I cannot transcribe right now.")
             await self._return_to_idle()
             return
 
