@@ -46,7 +46,8 @@ import org.json.JSONObject
 class AudioService : Service(), BridgeSocket.Events {
 
     private lateinit var prefs: Prefs
-    private var bridge: BridgeSocket? = null
+    // Written on the main thread, read on OkHttp's callback thread.
+    @Volatile private var bridge: BridgeSocket? = null
     private var recorder: AudioRecord? = null
     private var captureThread: Thread? = null
     private var wakeLock: PowerManager.WakeLock? = null
@@ -116,7 +117,15 @@ class AudioService : Service(), BridgeSocket.Events {
 
         acquireWakeLock()
         running = true
-        bridge = BridgeSocket(prefs.socketUrl(), this).also { it.connect() }
+        // Recorded before connecting, not after. OkHttp calls back on its own
+        // thread the instant the handshake lands — milliseconds on a LAN — and
+        // `onOpen` reads this field to send the attach. Connecting first left a
+        // window where it read null, sent nothing, and left the panel with an
+        // open socket, a running service, a notification saying it was
+        // listening, and no microphone attached to anything.
+        val socket = BridgeSocket(prefs.socketUrl(), this)
+        bridge = socket
+        socket.connect()
         // START_STICKY so the system brings this back if it is ever killed:
         // a panel that quietly stopped listening is worse than one that is
         // obviously off.
@@ -142,14 +151,23 @@ class AudioService : Service(), BridgeSocket.Events {
         // session it knew about is gone, and frames sent under the old one are
         // refused rather than silently ignored.
         sessionId = ""
-        attachId = bridge?.request(TOPIC_ATTACH)
+        val socket = bridge
+        if (socket == null) {
+            // Was a silent dead end; now it says so.
+            Log.e(TAG, "socket opened before it was recorded — cannot offer the microphone")
+            return
+        }
+        attachId = socket.request(TOPIC_ATTACH)
+        Log.i(TAG, "socket open, offering the microphone")
     }
 
     override fun onResponse(id: String, payload: JSONObject) {
         if (id != attachId) return
         val session = payload.optString("sessionId")
         if (session.isEmpty()) {
-            Log.e(TAG, "attach refused: ${payload.optString("message")}")
+            val why = payload.optString("message").ifEmpty { "no reason given" }
+            Log.e(TAG, "attach refused: $why")
+            report(getString(R.string.audio_attach_refused, why))
             return
         }
         sessionId = session
