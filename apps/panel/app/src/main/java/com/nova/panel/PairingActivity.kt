@@ -2,7 +2,8 @@ package com.nova.panel
 
 import android.content.Intent
 import android.os.Bundle
-import android.widget.Toast
+import android.view.View
+import android.view.inputmethod.EditorInfo
 import androidx.appcompat.app.AppCompatActivity
 import com.nova.panel.databinding.ActivityPairingBinding
 
@@ -35,6 +36,19 @@ class PairingActivity : AppCompatActivity() {
         binding.microphone.isChecked = prefs.microphone
 
         binding.save.setOnClickListener { save() }
+
+        // Done on the token field submits the form. Without this, the key most
+        // obviously offered at the end of the last field does nothing, which
+        // reads as the app ignoring you — especially on a short screen where
+        // the button is the less discoverable of the two.
+        binding.token.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                save()
+                true
+            } else {
+                false
+            }
+        }
     }
 
     private fun save() {
@@ -42,10 +56,11 @@ class PairingActivity : AppCompatActivity() {
         val token = binding.token.text.toString().trim()
         val port = binding.port.text.toString().trim().toIntOrNull() ?: Prefs.DEFAULT_PORT
 
-        if (host.isEmpty() || token.isEmpty()) {
-            Toast.makeText(this, R.string.pair_incomplete, Toast.LENGTH_SHORT).show()
-            return
-        }
+        // Inline rather than a Toast: a panel is often set up with
+        // notifications never granted, and a Toast that never appears turns a
+        // refused form into a button that seems to do nothing at all.
+        if (host.isEmpty()) return fail(getString(R.string.pair_need_host), binding.host)
+        if (token.isEmpty()) return fail(getString(R.string.pair_need_token), binding.token)
 
         prefs.host = host
         prefs.port = port
@@ -61,5 +76,11 @@ class PairingActivity : AppCompatActivity() {
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         )
         finish()
+    }
+
+    private fun fail(message: String, field: View) {
+        binding.status.text = message
+        binding.status.visibility = View.VISIBLE
+        field.requestFocus()
     }
 }

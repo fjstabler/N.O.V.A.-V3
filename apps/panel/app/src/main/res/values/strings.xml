@@ -13,5 +13,6 @@
     <string name="audio_notification_body">This panel is acting as the microphone and speaker.</string>
     <string name="status_offline">Waiting for %1$s…</string>
     <string name="panel_settings">Panel settings</string>
-    <string name="pair_incomplete">An address and a token are both needed.</string>
+    <string name="pair_need_host">Enter the address of the machine running the core.</string>
+    <string name="pair_need_token">Enter the bridge token — see the note above.</string>
 </resources>

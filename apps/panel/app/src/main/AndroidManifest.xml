@@ -49,10 +49,14 @@
             </intent-filter>
         </activity>
 
+        <!-- adjustResize so the keyboard shrinks the form rather than covering
+             it: on a 480px-tall panel the default leaves the fields under the
+             keyboard with no way to scroll to them. -->
         <activity
             android:name=".PairingActivity"
             android:exported="false"
             android:screenOrientation="landscape"
+            android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|keyboardHidden" />
 
         <service
