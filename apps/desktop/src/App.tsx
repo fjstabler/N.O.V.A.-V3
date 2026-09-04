@@ -13,6 +13,7 @@ import { Conversation } from '@/components/Conversation';
 import { Notifications } from '@/components/Notifications';
 import { NovaCore } from '@/components/NovaCore';
 import { Pairing } from '@/components/Pairing';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { SettingsPanel } from '@/components/SettingsPanel';
 import { ConnectionStatus, DeveloperReadout } from '@/components/StatusOverlay';
 import { Surface } from '@/components/Surface';
@@ -146,7 +147,9 @@ export function App(): JSX.Element {
 
       <Notifications client={client} />
       <Surface client={client} />
-      <SettingsPanel client={client} />
+      <ErrorBoundary label="Settings could not open">
+        <SettingsPanel client={client} />
+      </ErrorBoundary>
       <TextConsole client={client} />
       <RemoteAudio client={client} />
 

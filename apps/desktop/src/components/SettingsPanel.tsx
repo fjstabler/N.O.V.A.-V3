@@ -18,6 +18,24 @@ import { useNova, type Settings } from '@/state/store';
 
 type Draft = Record<string, unknown>;
 
+/**
+ * A deep copy of the settings document.
+ *
+ * Not `structuredClone`: it arrived in Chrome 98, and this app is served to
+ * whatever WebView a wall panel happens to have. Vite transpiles syntax but
+ * not globals, so a missing one is not a downlevel build — it is a TypeError
+ * thrown mid-render, which unmounts the whole tree and leaves the screen the
+ * colour of the page background. On a device with no console that is a black
+ * screen and no way to find out why.
+ *
+ * Settings are a JSON document by construction — they came off the wire as
+ * one — so a round trip through JSON is an exact copy here, not an
+ * approximation.
+ */
+function clone(settings: Settings): Draft {
+  return JSON.parse(JSON.stringify(settings)) as Draft;
+}
+
 export interface DeviceOption {
   value: string;
   label: string;
@@ -368,7 +386,7 @@ export function SettingsPanel({ client }: { client: BridgeClient | null }): JSX.
   // silently carried into the next session.
   useEffect(() => {
     if (open && settings) {
-      setDraft(structuredClone(settings) as Draft);
+      setDraft(clone(settings));
       setError(null);
     }
   }, [open, settings]);
@@ -391,7 +409,7 @@ export function SettingsPanel({ client }: { client: BridgeClient | null }): JSX.
         patch: draft,
       });
       useNova.getState().setSettings(response.settings);
-      setDraft(structuredClone(response.settings) as Draft);
+      setDraft(clone(response.settings));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {

@@ -1824,3 +1824,71 @@
   .console { background: #121a2c; }
   .surface__card { background: #080d18; }
 }
+
+/* ------------------------------------------------------------------- crash */
+
+/*
+ * The last thing standing when a render throws. Deliberately plain: no custom
+ * properties, no blur, no animation — whatever broke may have broken those
+ * too, and a crash screen that cannot paint is the bug it is reporting.
+ */
+.crash {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: #04060d;
+  overflow: auto;
+}
+
+.crash__card {
+  max-width: 620px;
+  width: 100%;
+  padding: 20px 22px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 138, 138, 0.35);
+  background: #12141c;
+  font-family: system-ui, sans-serif;
+}
+
+.crash__title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 500;
+  color: #ff8a8a;
+}
+
+.crash__message {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #e9f0ff;
+}
+
+.crash__stack {
+  margin: 0 0 14px;
+  padding: 10px;
+  max-height: 180px;
+  overflow: auto;
+  border-radius: 8px;
+  background: #06080f;
+  color: #9fb0cc;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.crash__button {
+  padding: 9px 18px;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid rgba(120, 165, 235, 0.35);
+  background: #1a2438;
+  color: #e9f0ff;
+  font-size: 13px;
+  cursor: pointer;
+}
