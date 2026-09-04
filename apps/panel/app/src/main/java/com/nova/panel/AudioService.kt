@@ -18,7 +18,9 @@ import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.util.Base64
 import android.util.Log
@@ -58,6 +60,8 @@ class AudioService : Service(), BridgeSocket.Events {
 
     @Volatile private var sessionId = ""
     @Volatile private var attachId: String? = null
+    private val retries = Handler(Looper.getMainLooper())
+    private var attachAttempt = 0
     @Volatile private var capturing = true
     @Volatile private var running = false
 
@@ -140,6 +144,7 @@ class AudioService : Service(), BridgeSocket.Events {
 
     override fun onDestroy() {
         running = false
+        retries.removeCallbacksAndMessages(null)
         stopCapture()
         playback.release()
         bridge?.send(TOPIC_DETACH)
@@ -157,15 +162,41 @@ class AudioService : Service(), BridgeSocket.Events {
         // session it knew about is gone, and frames sent under the old one are
         // refused rather than silently ignored.
         sessionId = ""
+        attachAttempt = 0
+        retries.removeCallbacksAndMessages(null)
+        offerMicrophone()
+    }
+
+    /**
+     * Ask the core to take this device's microphone.
+     *
+     * Separate from `onOpen` because a refusal is usually temporary and the
+     * socket stays perfectly healthy through it, so there is no reconnection to
+     * ask again on. The core brings its bridge up first and its voice service
+     * last — after loading three models — so for the first seconds after a
+     * restart it accepts connections and refuses attachments. Asking once left
+     * the panel connected, silent, and never asking again until the app itself
+     * was restarted.
+     */
+    private fun offerMicrophone() {
+        if (!running) return
         val socket = bridge
         if (socket == null) {
-            // Was a silent dead end; now it says so.
             Log.e(TAG, "socket opened before it was recorded — cannot offer the microphone")
             return
         }
         attachId = socket.request(TOPIC_ATTACH)
-        Log.i(TAG, "socket open, offering the microphone")
+        Log.i(TAG, "offering the microphone (attempt ${attachAttempt + 1})")
         report(getString(R.string.audio_offering), transient = true)
+    }
+
+    private fun retryAttach() {
+        attachAttempt += 1
+        // Backs off to fifteen seconds and stays there: a core that is down for
+        // an hour should be met by a panel still asking when it returns.
+        val delay = minOf(MAX_ATTACH_BACKOFF_MS, 1000L * (1L shl minOf(attachAttempt, 4)))
+        retries.removeCallbacksAndMessages(null)
+        retries.postDelayed({ offerMicrophone() }, delay)
     }
 
     override fun onResponse(id: String, payload: JSONObject) {
@@ -173,12 +204,15 @@ class AudioService : Service(), BridgeSocket.Events {
         val session = payload.optString("sessionId")
         if (session.isEmpty()) {
             val why = payload.optString("message").ifEmpty { "no reason given" }
-            Log.e(TAG, "attach refused: $why")
+            Log.w(TAG, "attach refused: $why")
             report(getString(R.string.audio_attach_refused, why))
+            retryAttach()
             return
         }
         sessionId = session
         capturing = true
+        attachAttempt = 0
+        retries.removeCallbacksAndMessages(null)
         Log.i(TAG, "attached as $session at ${payload.optInt("sampleRate")} Hz")
         report(getString(R.string.audio_listening), transient = true)
         startCapture()
@@ -451,6 +485,7 @@ class AudioService : Service(), BridgeSocket.Events {
         private const val OUT_CHANNEL = AudioFormat.CHANNEL_OUT_MONO
         private const val ENCODING = AudioFormat.ENCODING_PCM_16BIT
 
+        private const val MAX_ATTACH_BACKOFF_MS = 15_000L
         private const val CHANNEL_ID = "nova-audio"
         private const val NOTIFICATION_ID = 1
         // Renewed while the service lives; a bounded lock cannot strand the
