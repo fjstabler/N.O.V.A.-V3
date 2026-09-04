@@ -266,7 +266,14 @@ token, and replaces only code and dependencies.
 ```sh
 pct enter <ctid>
 cd /opt/nova && git pull
-./scripts/proxmox/install-nova.sh
+bash scripts/proxmox/install-nova.sh
+```
+
+If `git pull` says *dubious ownership*, this container was set up before the
+installer started registering the checkout as safe. One command, once:
+
+```sh
+git config --global --add safe.directory /opt/nova
 ```
 
 ## Day to day

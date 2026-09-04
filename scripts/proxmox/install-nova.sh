@@ -101,6 +101,15 @@ fi
 
 chown -R "$SERVICE_USER:$SERVICE_USER" "$SOURCE_DIR"
 
+# The checkout is owned by the service user but pulled as root, and git refuses
+# to operate on a repository owned by someone else — so without this, the
+# documented update path (`git pull` as root) dies with "dubious ownership"
+# rather than updating anything. Worse, it fails the same way the first time
+# someone tries it, on a repository they just cloned themselves.
+if ! git config --system --get-all safe.directory 2>/dev/null | grep -qxF "$SOURCE_DIR"; then
+    git config --system --add safe.directory "$SOURCE_DIR"
+fi
+
 if [[ ! -x "$PY" ]]; then
     say "Creating the virtualenv"
     as_nova python3 -m venv "$VENV"
