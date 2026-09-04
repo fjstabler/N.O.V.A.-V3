@@ -36,7 +36,7 @@ class BridgeSocket(
         fun onOpen()
         fun onEvent(topic: String, payload: JSONObject)
         fun onResponse(id: String, payload: JSONObject)
-        fun onClosed(authorised: Boolean)
+        fun onClosed(authorised: Boolean, reason: String)
     }
 
     private val client = OkHttpClient.Builder()
@@ -122,7 +122,7 @@ class BridgeSocket(
         socket = null
         if (closedByUs) return
         Log.w(TAG, "socket failed: ${t.message}")
-        listener.onClosed(true)
+        listener.onClosed(true, t.message ?: t.javaClass.simpleName)
         scheduleReconnect()
     }
 
@@ -133,7 +133,10 @@ class BridgeSocket(
         // already refused is pointless; the panel has to be paired again.
         val authorised = code != 4401
         if (!authorised) Log.e(TAG, "token rejected by the core")
-        listener.onClosed(authorised)
+        listener.onClosed(
+            authorised,
+            if (authorised) "closed (${code})" else "the core refused this panel's token",
+        )
         if (authorised) scheduleReconnect()
     }
 

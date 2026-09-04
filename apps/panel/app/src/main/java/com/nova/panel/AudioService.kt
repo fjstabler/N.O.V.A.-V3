@@ -72,8 +72,13 @@ class AudioService : Service(), BridgeSocket.Events {
      * that silently never starts is indistinguishable from one that is working
      * and simply not hearing anything.
      */
-    private fun report(message: String) {
-        sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).putExtra(EXTRA_STATUS, message))
+    private fun report(message: String, transient: Boolean = false) {
+        sendBroadcast(
+            Intent(ACTION_STATUS)
+                .setPackage(packageName)
+                .putExtra(EXTRA_STATUS, message)
+                .putExtra(EXTRA_TRANSIENT, transient)
+        )
     }
 
     override fun onCreate() {
@@ -125,6 +130,7 @@ class AudioService : Service(), BridgeSocket.Events {
         // listening, and no microphone attached to anything.
         val socket = BridgeSocket(prefs.socketUrl(), this)
         bridge = socket
+        report(getString(R.string.audio_connecting, prefs.host, prefs.port), transient = true)
         socket.connect()
         // START_STICKY so the system brings this back if it is ever killed:
         // a panel that quietly stopped listening is worse than one that is
@@ -159,6 +165,7 @@ class AudioService : Service(), BridgeSocket.Events {
         }
         attachId = socket.request(TOPIC_ATTACH)
         Log.i(TAG, "socket open, offering the microphone")
+        report(getString(R.string.audio_offering), transient = true)
     }
 
     override fun onResponse(id: String, payload: JSONObject) {
@@ -173,6 +180,7 @@ class AudioService : Service(), BridgeSocket.Events {
         sessionId = session
         capturing = true
         Log.i(TAG, "attached as $session at ${payload.optInt("sampleRate")} Hz")
+        report(getString(R.string.audio_listening), transient = true)
         startCapture()
     }
 
@@ -191,8 +199,9 @@ class AudioService : Service(), BridgeSocket.Events {
         }
     }
 
-    override fun onClosed(authorised: Boolean) {
+    override fun onClosed(authorised: Boolean, reason: String) {
         sessionId = ""
+        report(getString(R.string.audio_disconnected, reason))
         if (!authorised) {
             // The token is wrong and will stay wrong. Stop rather than hammer.
             Log.e(TAG, "stopping: the core refused this panel's token")
@@ -463,6 +472,7 @@ class AudioService : Service(), BridgeSocket.Events {
         /** Broadcast so the panel can say on screen why it cannot hear. */
         const val ACTION_STATUS = "com.nova.panel.AUDIO_STATUS"
         const val EXTRA_STATUS = "status"
+        const val EXTRA_TRANSIENT = "transient"
 
         fun start(context: Context) {
             // Checked here as well as in the service: making the promise at all

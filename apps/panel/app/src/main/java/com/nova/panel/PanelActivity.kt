@@ -65,7 +65,8 @@ class PanelActivity : AppCompatActivity() {
     /** The audio service saying, on screen, why it cannot hear. */
     private val audioStatus = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            intent.getStringExtra(AudioService.EXTRA_STATUS)?.let(::showStatus)
+            val message = intent.getStringExtra(AudioService.EXTRA_STATUS) ?: return
+            showStatus(message, intent.getBooleanExtra(AudioService.EXTRA_TRANSIENT, false))
         }
     }
 
@@ -257,12 +258,21 @@ class PanelActivity : AppCompatActivity() {
         }
     }
 
-    private fun showStatus(text: String) {
+    /**
+     * @param transient progress worth seeing once. Anything else is a problem
+     *   and stays up until it is dealt with — a panel that reports a failure
+     *   for three seconds at four in the morning has reported nothing.
+     */
+    private fun showStatus(text: String, transient: Boolean = false) {
         runOnUiThread {
+            binding.status.removeCallbacks(hideStatus)
             binding.status.text = text
             binding.status.visibility = View.VISIBLE
+            if (transient) binding.status.postDelayed(hideStatus, STATUS_LINGER_MS)
         }
     }
+
+    private val hideStatus = Runnable { binding.status.visibility = View.GONE }
 
     // ------------------------------------------------------------------ audio
 
@@ -292,5 +302,6 @@ class PanelActivity : AppCompatActivity() {
         private const val RETRY_MS = 4000L
         private const val ESCAPE_TAPS = 5
         private const val ESCAPE_WINDOW_MS = 2500L
+        private const val STATUS_LINGER_MS = 6000L
     }
 }
