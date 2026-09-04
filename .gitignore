@@ -47,6 +47,9 @@ apps/panel/local.properties
 *.apk
 *.aab
 *.keystore
+# …except the one checked in so a device with no developer tooling can still
+# install the panel. See apps/panel/prebuilt/README.md.
+!apps/panel/prebuilt/*.apk
 
 # ---- OS / editor ----
 .DS_Store
