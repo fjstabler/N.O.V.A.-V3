@@ -18,6 +18,9 @@ sudo apt install libportaudio2 ffmpeg
 An NVIDIA GPU is optional. With one, transcription runs in float16 on CUDA;
 without one it falls back to int8 on CPU automatically.
 
+> Running it on a server rather than a desktop — so it is awake when the
+> desktop is not — is a different install: see [PROXMOX.md](PROXMOX.md).
+
 ## Install
 
 ```bash

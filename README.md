@@ -126,6 +126,7 @@ The assistant runs commands on real machines, so this is not an afterthought.
 | `apps/panel/` | Android kiosk app — the interface plus a native microphone |
 | `packages/protocol/` | Shared wire types, checked against Python in CI |
 | `docs/` | Architecture, setup, protocol, plugin guide, ADRs |
+| `docs/PROXMOX.md` | Running the core as an always-on service on a server |
 | `scripts/` | Model download, protocol parity check |
 
 ## Extending it
