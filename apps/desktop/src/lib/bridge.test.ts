@@ -234,6 +234,40 @@ describe('descriptor resolution', () => {
   });
 });
 
+describe('message ids', () => {
+  /**
+   * Regression: ids came from `crypto.randomUUID`, which is gated on a secure
+   * context. It exists on loopback and over HTTPS and is undefined on
+   * `http://192.168.x.x` — so every request threw on exactly the devices this
+   * is served to, and every test passed.
+   */
+  it('are still produced without crypto.randomUUID', async () => {
+    vi.stubGlobal('crypto', {
+      getRandomValues: (array: Uint8Array) => {
+        for (let i = 0; i < array.length; i += 1) array[i] = i;
+        return array;
+      },
+    });
+
+    const { client, socket } = await connected();
+    void client.request('settings.get');
+
+    const sent = JSON.parse(socket.sent[0]!);
+    expect(sent.id).toMatch(/^[0-9a-f]{32}$/);
+    client.close();
+  });
+
+  it('fall back again when there is no crypto at all', async () => {
+    vi.stubGlobal('crypto', undefined);
+
+    const { client, socket } = await connected();
+    void client.request('settings.get');
+
+    expect(JSON.parse(socket.sent[0]!).id).toBeTruthy();
+    client.close();
+  });
+});
+
 describe('a refused token', () => {
   it('tells the UI once', async () => {
     const client = makeClient();

@@ -28,6 +28,12 @@ const TOO_NEW: Array<{ pattern: RegExp; name: string; since: string }> = [
   { pattern: /\.toSorted\s*\(/, name: '.toSorted()', since: 'Chrome 110' },
   { pattern: /\.toReversed\s*\(/, name: '.toReversed()', since: 'Chrome 110' },
   { pattern: /\.toSpliced\s*\(/, name: '.toSpliced()', since: 'Chrome 110' },
+  // Not a version problem — these exist in every modern browser and are absent
+  // on `http://192.168.x.x`, which is every device this is actually served to.
+  // Loopback is a secure context, so testing there hides them completely.
+  { pattern: /\bcrypto\.randomUUID\s*\(/, name: 'crypto.randomUUID()', since: 'a secure context' },
+  { pattern: /\bcrypto\.subtle\b/, name: 'crypto.subtle', since: 'a secure context' },
+  { pattern: /\bnavigator\.clipboard\b/, name: 'navigator.clipboard', since: 'a secure context' },
 ];
 
 // Vitest runs from the package root.
@@ -55,6 +61,10 @@ describe('browser compatibility', () => {
     for (const file of sources(ROOT)) {
       const lines = readFileSync(file, 'utf8').split('\n');
       lines.forEach((line, index) => {
+        // Not a parser: enough to skip the comments that explain why these are
+        // banned, which would otherwise be the only thing this ever reports.
+        const code = line.trim();
+        if (code.startsWith('*') || code.startsWith('//') || code.startsWith('/*')) return;
         for (const { pattern, name, since } of TOO_NEW) {
           if (pattern.test(line)) {
             const where = `${file.slice(ROOT.length + 1)}:${index + 1}`;

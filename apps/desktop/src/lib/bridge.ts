@@ -44,6 +44,31 @@ export class BridgeError extends Error {
 const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_BACKOFF_MS = 15_000;
 
+/**
+ * A unique id for one request.
+ *
+ * Not `crypto.randomUUID()`. That is gated on a secure context, so it exists on
+ * `localhost` and over HTTPS and is simply undefined on `http://192.168.x.x` —
+ * which is every phone and wall panel talking to a core on the LAN. Testing
+ * against loopback hides this completely: the call works there and throws on
+ * the one class of device it was written for.
+ *
+ * `getRandomValues` carries no such restriction, and the last resort only has
+ * to be unique among this tab's in-flight requests, which is a far weaker thing
+ * to ask than uniqueness in general.
+ */
+function messageId(): string {
+  const source = globalThis.crypto;
+  if (typeof source?.randomUUID === 'function') {
+    return source.randomUUID().replace(/-/g, '');
+  }
+  if (typeof source?.getRandomValues === 'function') {
+    const bytes = source.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+  return `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 14)}`;
+}
+
 export class BridgeClient {
   private socket: WebSocket | null = null;
   private readonly pending = new Map<string, Pending>();
@@ -285,7 +310,7 @@ export class BridgeClient {
       return Promise.reject(new BridgeError('not connected to the core service', 'nova.offline'));
     }
 
-    const id = crypto.randomUUID().replace(/-/g, '');
+    const id = messageId();
     const envelope: Envelope = {
       v: PROTOCOL_VERSION,
       kind: 'request',
@@ -333,7 +358,7 @@ export class BridgeClient {
       v: PROTOCOL_VERSION,
       kind: 'request',
       topic,
-      id: crypto.randomUUID().replace(/-/g, ''),
+      id: messageId(),
       ts: Date.now() / 1000,
       payload,
     };
