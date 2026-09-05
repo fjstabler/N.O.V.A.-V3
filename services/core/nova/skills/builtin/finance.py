@@ -1,351 +1,144 @@
-"""Personal finance advisor: live Starling Bank balance plus expiring
-reminders about one-off upcoming costs.
+"""Money questions, answered without the model seeing the answer.
 
-Two things this deliberately is not: a way to move money (every call here is
-a GET; there is no path from any tool to a payment), and a way to intercept a
-purchase before it happens (no bank exposes that to a third party — card
-authorisation happens between the merchant, the card network and the bank,
-with no hook for "ask my AI first"). What it gives instead is what actually
-works: the user asks NOVA before they buy something, the way they would ring
-an advisor, and gets a straight answer built from real numbers — the live
-balance, what's already committed (Starling's own standing orders plus
-anything the user has told NOVA to expect), and recent spending.
+Every tool here raises `FinalAnswer`. That is not a stylistic choice: an
+ordinary tool result is appended to the model's message list and sent with the
+next request, so a tool that returns a balance is a tool that puts that balance
+in a prompt. Raising ends the turn with the module's own sentence and the
+figures never leave the machine.
 
-Upcoming one-off costs ("the vet bill is £200, due Tuesday") are stored
-through the existing memory service rather than a new table — they are just
-memories of kind EVENT, subject 'upcoming-expense', with a TTL computed from
-the due date plus a grace period, so a bill quietly stops being mentioned
-once it has passed rather than nagging forever.
+It also fixes the wording. Handed "£340 available, 11 days to payday", a model
+will helpfully add "so yes, you can afford it" — and a verdict from a system
+its owner can reprogram is not a limit, it is something to argue with. The
+module answers with numbers and stops.
 """
 
 from __future__ import annotations
 
-import time
-from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any
+from typing import Annotated
 
-from ...integrations.calendar import parse_when
-from ...memory.models import MemoryKind
-from ...memory.service import MemoryService
-from ...runtime.errors import SkillError
+from ...finance.module import FinanceModule
+from ...finance.service import FinanceService
+from ...runtime.errors import FinalAnswer, SkillError
 from ..base import Param, Skill, tool
-
-#: Feed items in these states never happened (or were undone) and shouldn't
-#: count as spending.
-_EXCLUDED_FEED_STATUSES = {"DECLINED", "REVERSED", "FAILED"}
 
 
 class FinanceSkill(Skill):
     name = "finance"
-    description = "Live bank balance, spending and upcoming-cost tracking for judging a purchase."
-    category = "Finance"
-    prompt_hint = (
-        "This is a personal finance advisor, not a payment system — it can never move money, "
-        "freeze a card or hold up a purchase (no bank gives a third party that kind of control). "
-        "Use it when asked to check the balance, weigh up whether a purchase is a good idea, or "
-        "remember a one-off upcoming cost. When judging a purchase, weigh the live balance, "
-        "anything already committed (standing orders and remembered upcoming costs) and recent "
-        "spending against the price, then give a direct, honest opinion — don't just recite the "
-        "numbers back and leave the judgement to the user. Never imply the purchase itself can be "
-        "stopped or held here; the decision, and tapping the card, are always the user's."
-    )
+    description = "Balances, what is committed before payday, and the cooling-off queue."
 
     def is_available(self) -> tuple[bool, str]:
         if not self.ctx.settings.finance.enabled:
-            return False, "finance skill disabled in settings"
-        if self.ctx.service("memory") is None:
-            return False, "memory service is not running"
+            return False, "finance is disabled in settings"
         return True, ""
 
-    @property
-    def memory(self) -> MemoryService:
-        return self.ctx.require("memory", MemoryService)
-
-    def context_lines(self) -> list[str]:
-        if self.ctx.settings.finance.starling_access_token.strip():
-            return [
-                "A Starling Bank account is connected — live balance and spending are available."
-            ]
-        return [
-            "No bank account connected — only manually remembered upcoming costs are available, "
-            "not a live balance. Point to Settings → Finance if a live balance would help."
-        ]
-
-    # ------------------------------------------------------------------ bank
-
-    @tool("Get the live Starling Bank balance.")
-    async def check_balance(self) -> str:
-        account = await self._default_account()
-        balance = await self._starling_get(f"/accounts/{account['accountUid']}/balance")
-        cleared = _money(balance.get("clearedBalance"))
-        effective = _money(balance.get("effectiveBalance"))
-        line = f"Cleared balance: £{cleared:.2f}."
-        if abs(effective - cleared) > 0.005:
-            line += f" Effective balance once pending transactions settle: £{effective:.2f}."
-        return line
-
-    @tool(
-        "Check whether a purchase is a responsible idea right now — weighs the live balance, "
-        "what's already committed (standing orders, remembered upcoming costs) and recent "
-        "spending against the price. Use for 'can I afford X', 'should I buy X', or when called "
-        "to ask about a specific purchase."
+    prompt_hint = (
+        "Money questions go to the finance tools. They answer directly and their replies "
+        "are final — do not restate, summarise or add to them, and never offer an opinion "
+        "on whether a purchase is sensible. You will not see the figures, which is "
+        "deliberate."
     )
-    async def check_affordability(
-        self,
-        item: Annotated[
-            str, Param("What's being considered", examples=("a new phone", "a takeaway"))
-        ],
-        price: Annotated[float, Param("Price in pounds")],
-    ) -> str:
-        lines = [f"Considering: {item} — £{price:.2f}"]
-        committed = 0.0
-        effective: float | None = None
-        token = self.ctx.settings.finance.starling_access_token.strip()
 
-        if not token:
-            lines.append(
-                "No bank account connected, so this is based only on what's been remembered, "
-                "not live numbers."
-            )
+    #: Only used when the finance service is not running — see `_finance`.
+    _module: FinanceModule | None = None
+
+    async def _finance(self) -> FinanceModule:
+        """The module, shared with the service wherever possible.
+
+        One instance, so the ledger has one writer and the cooling-off queue
+        the service is watching is the same queue these tools add to. The
+        fallback exists because a skill must still answer if the service failed
+        to start — its own instance answers questions perfectly well, it just
+        has nothing watching in the background.
+        """
+        service = self.ctx.service("finance", FinanceService)
+        if service is not None and service.module is not None:
+            return service.module
+
+        settings = self.ctx.settings.finance
+        if self._module is None:
+            self._module = FinanceModule(settings, self.ctx.paths.data_dir)
+            await self._module.open()
         else:
-            try:
-                account = await self._default_account()
-                balance = await self._starling_get(f"/accounts/{account['accountUid']}/balance")
-                effective = _money(balance.get("effectiveBalance"))
-                lines.append(
-                    f"Live balance right now (after pending transactions): £{effective:.2f}"
-                )
+            self._module.reconfigure(settings)
+        return self._module
 
-                days = self.ctx.settings.finance.recent_spend_days
-                spent, count = await self._recent_spend(account, days)
-                lines.append(
-                    f"Spent in the last {days} days: £{spent:.2f} across {count} transaction(s) "
-                    f"(£{spent / days:.2f}/day average)"
-                )
-
-                standing_total, standing_count = await self._standing_orders(account)
-                if standing_total is not None:
-                    committed += standing_total
-                    lines.append(
-                        f"Standing orders currently set up: £{standing_total:.2f} total across "
-                        f"{standing_count} payment(s)"
-                    )
-            except SkillError as exc:
-                lines.append(f"Couldn't reach the live Starling balance: {exc}")
-
-        upcoming = await self._list_upcoming()
-        if upcoming:
-            committed += sum(one["amount"] for one in upcoming)
-            lines.append("Upcoming costs already told about:")
-            lines.extend(
-                f"  - {one['description']}: £{one['amount']:.2f}, due {one['due_label']}"
-                for one in upcoming
-            )
-        else:
-            lines.append("No upcoming one-off costs remembered.")
-
-        if effective is not None:
-            remaining = effective - committed - price
-            lines.append(
-                f"After this purchase and everything already committed above: £{remaining:.2f} "
-                "left."
-            )
-
-        lines.append(
-            "Weigh this up and give a direct opinion — you cannot hold or block the purchase, "
-            "only advise."
-        )
-        return "\n".join(lines)
-
-    # -------------------------------------------------------------- upcoming
+    # -------------------------------------------------------------- questions
 
     @tool(
-        "Remember a one-off upcoming cost so it's weighed into affordability checks — a bill, a "
-        "booked trip, a renewal. Stops being mentioned a few days after it's due.",
-        mutating=True,
+        "How much is available to spend, and what a given spend would leave. "
+        "Use for 'how much have I got', 'can I afford £200', 'what's left'."
     )
-    async def add_upcoming_expense(
+    async def affordability(
         self,
-        description: Annotated[
-            str,
-            Param("What it's for", examples=("council tax", "vet bill", "car insurance renewal")),
-        ],
-        amount: Annotated[float, Param("Amount in pounds")],
-        due: Annotated[
-            str, Param("When it's due", examples=("next Tuesday", "the 3rd", "in 10 days"))
-        ],
-        notes: Annotated[str, Param("Anything else worth knowing")] = "",
+        amount: Annotated[
+            float, Param("The spend being considered, in pounds. 0 to just ask what is available.")
+        ] = 0.0,
     ) -> str:
-        due_at, _ = parse_when(due)
-        grace = timedelta(days=self.ctx.settings.finance.upcoming_expense_grace_days)
-        ttl_seconds = max((due_at + grace - datetime.now()).total_seconds(), 3600.0)
-        description = description.strip()
-        await self.memory.remember(
-            f"{description} — £{amount:.2f}, due {due_at:%A %d %B}",
-            kind=MemoryKind.EVENT,
-            subject="upcoming-expense",
-            importance=0.6,
-            source="explicit",
-            metadata={
-                "description": description,
-                "amount": amount,
-                "due_at": due_at.timestamp(),
-                "notes": notes,
-            },
-            ttl_seconds=ttl_seconds,
-        )
-        return f"Noted — {description}, £{amount:.2f}, due {due_at:%A %d %B}."
+        finance = await self._finance()
+        raise FinalAnswer(await finance.affordability(amount))
 
-    @tool("List upcoming one-off costs that have been remembered and haven't expired yet.")
-    async def list_upcoming_expenses(self) -> str:
-        upcoming = await self._list_upcoming()
-        if not upcoming:
-            return "Nothing remembered."
-        return "\n".join(
-            f"{one['description']}: £{one['amount']:.2f}, due {one['due_label']}"
-            for one in upcoming
-        )
+    @tool("What is still due to leave the account before payday, and the balance behind it.")
+    async def committed(self) -> str:
+        finance = await self._finance()
+        raise FinalAnswer(await finance.committed())
+
+    # ------------------------------------------------------------ cooling off
 
     @tool(
-        "Stop tracking a previously remembered upcoming cost — plans changed, or it's already "
-        "been paid.",
-        mutating=True,
+        "Put a purchase on the cooling-off list. Use when someone says they want to "
+        "buy something — it is not a decision, it is a note to ask them again later."
     )
-    async def cancel_upcoming_expense(
-        self, description: Annotated[str, Param("Which one, by name")]
+    async def want_to_buy(
+        self,
+        item: Annotated[str, Param("What they want to buy")],
+        amount: Annotated[float, Param("Price in pounds")],
     ) -> str:
-        needle = description.strip().lower()
-        if not needle:
-            raise SkillError("Which upcoming cost do you mean?")
-        memories = await self.memory.list_memories(MemoryKind.EVENT, limit=200)
-        now = time.time()
-        for memory in memories:
-            if memory.subject != "upcoming-expense":
-                continue
-            if memory.expires_at is not None and memory.expires_at < now:
-                continue
-            stored = str(memory.metadata.get("description", "")).lower()
-            if needle in stored or stored in needle:
-                if memory.id is not None:
-                    await self.memory.forget(memory.id)
-                return f"Removed '{memory.metadata.get('description', description)}'."
-        raise SkillError(f"Nothing upcoming matching '{description}'.")
+        finance = await self._finance()
+        raise FinalAnswer(await finance.want(item, amount))
 
-    async def _list_upcoming(self) -> list[dict[str, Any]]:
-        memories = await self.memory.list_memories(MemoryKind.EVENT, limit=200)
-        now = time.time()
-        out: list[dict[str, Any]] = []
-        for memory in memories:
-            if memory.subject != "upcoming-expense":
-                continue
-            if memory.expires_at is not None and memory.expires_at < now:
-                continue
-            due_at = memory.metadata.get("due_at")
-            due_label = (
-                datetime.fromtimestamp(due_at).strftime("%A %d %B") if due_at else "an unknown date"
-            )
-            out.append(
-                {
-                    "description": memory.metadata.get("description", memory.content),
-                    "amount": float(memory.metadata.get("amount", 0.0)),
-                    "due_label": due_label,
-                    "due_at": float(due_at or 0.0),
-                }
-            )
-        out.sort(key=lambda one: one["due_at"])
-        return out
+    @tool("List purchases waiting out their cooling-off period, with the total.")
+    async def waiting_list(self) -> str:
+        finance = await self._finance()
+        raise FinalAnswer(await finance.queue())
 
-    # ------------------------------------------------------------- starling
+    @tool("Record what happened to a waiting purchase: bought, dropped, or still thinking.")
+    async def decide(
+        self,
+        outcome: Annotated[str, Param("bought, dropped, or still thinking")],
+        item: Annotated[str, Param("Which one, if more than one is waiting")] = "",
+    ) -> str:
+        finance = await self._finance()
+        raise FinalAnswer(await finance.decide(item, outcome))
 
-    def _starling_base_url(self) -> str:
-        if self.ctx.settings.finance.starling_sandbox:
-            return "https://api-sandbox.starlingbank.com/api/v2"
-        return "https://api.starlingbank.com/api/v2"
+    @tool("How much was saved by dropping purchases after they cooled off.")
+    async def dropped(
+        self,
+        days: Annotated[int, Param("How far back to look, in days")] = 30,
+    ) -> str:
+        finance = await self._finance()
+        raise FinalAnswer(await finance.dropped(max(1, days)))
 
-    async def _starling_get(
-        self, path: str, params: dict[str, str] | None = None
-    ) -> dict[str, Any]:
-        token = self.ctx.settings.finance.starling_access_token.strip()
-        if not token:
-            raise SkillError(
-                "No Starling access token configured — add one under Settings → Finance."
-            )
-        import httpx
+    # --------------------------------------------------------------- ingestion
 
+    @tool("Read a bank statement CSV into the ledger.")
+    async def import_statement(
+        self,
+        path: Annotated[str, Param("Path to the CSV; blank uses the configured one")] = "",
+    ) -> str:
+        finance = await self._finance()
+        raise FinalAnswer(await finance.import_statement(path))
+
+    # --------------------------------------------------------------- transfers
+
+    @tool(
+        "Run the payday split, moving the configured amount into savings. Refuses "
+        "unless transfers are enabled in settings, and logs a dry run otherwise."
+    )
+    async def payday_split(self) -> str:
+        finance = await self._finance()
         try:
-            async with httpx.AsyncClient(
-                timeout=15.0,
-                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-            ) as client:
-                response = await client.get(f"{self._starling_base_url()}{path}", params=params)
-        except httpx.HTTPError as exc:
-            raise SkillError(f"Couldn't reach Starling: {exc}") from exc
-
-        if response.status_code == 401:
-            raise SkillError(
-                "Starling rejected the access token — generate a fresh one from the developer "
-                "portal."
-            )
-        if response.status_code == 403:
-            raise SkillError(
-                "The Starling access token doesn't have permission for this — check its scopes."
-            )
-        if response.status_code >= 400:
-            raise SkillError(f"Starling returned {response.status_code} for {path}.")
-        return response.json() or {}
-
-    async def _default_account(self) -> dict[str, Any]:
-        data = await self._starling_get("/accounts")
-        accounts = data.get("accounts") or []
-        if not accounts:
-            raise SkillError("Starling returned no accounts for this token.")
-        wanted = self.ctx.settings.finance.account_name.strip().lower()
-        if wanted:
-            for account in accounts:
-                if str(account.get("name", "")).strip().lower() == wanted:
-                    return account
-        return accounts[0]
-
-    async def _recent_spend(self, account: dict[str, Any], days: int) -> tuple[float, int]:
-        since = (datetime.now(UTC) - timedelta(days=days)).isoformat()
-        data = await self._starling_get(
-            f"/feed/account/{account['accountUid']}/category/{account['defaultCategory']}",
-            params={"changesSince": since},
-        )
-        total = 0.0
-        count = 0
-        for feed_item in data.get("feedItems") or []:
-            if feed_item.get("direction") != "OUT":
-                continue
-            if feed_item.get("status") in _EXCLUDED_FEED_STATUSES:
-                continue
-            total += _money(feed_item.get("amount"))
-            count += 1
-        return total, count
-
-    async def _standing_orders(self, account: dict[str, Any]) -> tuple[float | None, int]:
-        """Best-effort. Starling's standing-order response shape is the one part of this
-        integration that couldn't be pinned down from public documentation alone, so any
-        surprise in it is swallowed here rather than breaking the whole affordability check."""
-        try:
-            data = await self._starling_get(
-                f"/payments/local/account/{account['accountUid']}"
-                f"/category/{account['defaultCategory']}/standing-orders"
-            )
-        except SkillError:
-            return None, 0
-        orders = data.get("standingOrders") or data.get("standingOrderPaymentOrders") or []
-        total = 0.0
-        count = 0
-        for order in orders:
-            if order.get("cancelledAt"):
-                continue
-            total += _money(order.get("amount"))
-            count += 1
-        return total, count
-
-
-def _money(amount: dict[str, Any] | None) -> float:
-    if not amount:
-        return 0.0
-    return float(amount.get("minorUnits", 0)) / 100
+            raise FinalAnswer(await finance.payday_split(triggered_by="asked"))
+        except SkillError as exc:
+            # A refusal is also an answer the model has no business rewording:
+            # "over the cap, nothing was moved" must not come back softened.
+            raise FinalAnswer(str(exc.message)) from exc

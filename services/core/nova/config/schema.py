@@ -517,35 +517,115 @@ class PresenceSettings(BaseModel):
     match_threshold: float = Field(default=0.363, ge=0.0, le=1.0)
 
 
-class FinanceSettings(BaseModel):
-    """Personal finance advisor: a live Starling Bank balance plus expiring
-    reminders about one-off upcoming costs, so 'can I afford this' has real
-    numbers behind it.
+class CommittedOutgoing(BaseModel):
+    """A payment that is already spoken for: rent, a subscription, a phone bill."""
 
-    Strictly read-only against the bank — nothing here can move money, freeze
-    a card, or hold a purchase, because no bank exposes that to a third party
-    in the first place. This exists so the user can ask before spending, the
-    way they'd ring an advisor — never to intercept a purchase after the fact.
+    name: str = ""
+    amount: float = Field(default=0.0, ge=0)
+    day_of_month: int = Field(default=1, ge=1, le=31)
+
+
+class FinanceSettings(BaseModel):
+    """Personal finance, worked out locally.
+
+    Two rules shape everything here and neither is a preference. Bank data
+    never goes into a prompt — the module does its own arithmetic and produces
+    its own sentences, so no balance, merchant or transaction reaches OpenAI or
+    Anthropic. And it reports rather than decides: it answers with figures and
+    never with a verdict, because a judgement from a system its owner can
+    reprogram is something to argue with rather than a limit.
+
+    The bank token is not here. It lives in `finance.env` in the data
+    directory, at 0600, read only by this module — `config.toml` is written by
+    the settings panel, broadcast to clients and restored from exports, which
+    are three routes a bank credential has no business being near.
     """
 
     enabled: bool = False
-    starling_access_token: str = Secret
-    starling_sandbox: bool = Field(
-        default=False, description="Use Starling's sandbox API instead of the real account"
+    provider: Literal["csv", "starling"] = Field(
+        default="csv",
+        description="Where transactions come from. 'csv' needs no credentials and is "
+        "the way to try this out.",
     )
-    #: Matches an account's `name` field from Starling's /accounts list; empty
-    #: uses the first account returned, which covers the common single-account case.
+    sandbox: bool = Field(
+        default=False, description="Use the bank's sandbox rather than a real account"
+    )
     account_name: str = Field(
-        default="", description="Which Starling account to use, if more than one"
+        default="", description="Which account to use, if the token has more than one"
     )
-    #: A payment can settle a day or two after its due date, so a reminder that
-    #: vanished exactly on the due date would still be wrong when asked "what's
-    #: still coming up" the next morning.
-    upcoming_expense_grace_days: int = Field(
-        default=3, ge=0, le=30, description="Days after the due date a reminder stays visible"
+    statement_path: str = Field(
+        default="", description="CSV statement to read when the provider is 'csv'"
     )
-    recent_spend_days: int = Field(
-        default=30, ge=1, le=90, description="Window used to judge normal discretionary spending"
+
+    # -------------------------------------------------------------- budgeting
+    payday_day: int = Field(default=25, ge=1, le=31, description="Day of the month you are paid")
+    payday_moves: Literal["before", "after"] = Field(
+        default="before",
+        description="Which way payday moves off a weekend or bank holiday. 'before' is the "
+        "common arrangement and the safe assumption: expecting money later than it arrives "
+        "overstates what is available.",
+    )
+    committed: list[CommittedOutgoing] = Field(
+        default_factory=list, description="Outgoings already spoken for before payday"
+    )
+
+    # ----------------------------------------------------------------- alerts
+    large_spend_threshold: float = Field(
+        default=100.0, ge=0, description="Announce single debits above this"
+    )
+    webhook_enabled: bool = Field(
+        default=False, description="Accept transaction webhooks from the bank"
+    )
+    webhook_host: str = Field(
+        default="127.0.0.1",
+        description="Address the webhook listener binds to. Loopback by default: turning "
+        "webhooks on should not expose a port. Put a tunnel or reverse proxy in front.",
+    )
+    webhook_port: int = Field(
+        default=8770, ge=1, le=65535, description="Port the webhook listener binds to"
+    )
+    webhook_path: str = Field(default="/finance/webhook", description="Path the bank posts to")
+    webhook_signature: Literal["starling", "hmac-sha256"] = Field(
+        default="starling",
+        description="How deliveries are signed. Starling base64-encodes a SHA-512 of the "
+        "secret and the body; 'hmac-sha256' is Monzo's hex HMAC. The shared secret is "
+        "NOVA_FINANCE_WEBHOOK_SECRET in finance.env, never here.",
+    )
+    refresh_minutes: int = Field(
+        default=15,
+        ge=0,
+        le=1440,
+        description="How often to pull new transactions from the bank. 0 turns polling off, "
+        "which is only sensible when webhooks are arriving.",
+    )
+
+    # ------------------------------------------------------------ cooling off
+    cooling_off_hours: float = Field(
+        default=48.0, ge=0.5, le=720, description="How long a wanted purchase waits before it asks"
+    )
+
+    # --------------------------------------------------------------- transfers
+    #: Off, and staying off until someone means it. Every guard below is
+    #: pointless without this one.
+    enable_transfers: bool = Field(
+        default=False, description="Allow the payday split to actually move money"
+    )
+    transfer_dry_run: bool = Field(
+        default=True, description="Log the intended transfer without executing it"
+    )
+    transfer_amount: float = Field(default=0.0, ge=0, description="Moved to savings on payday")
+    transfer_pot: str = Field(default="", description="Savings goal or pot to move it into")
+    transfer_max: float = Field(
+        default=100.0,
+        ge=0,
+        description="Hard cap on any single transfer, as a guard against a bug draining "
+        "the account. A transfer above this is refused rather than clamped.",
+    )
+    salary_min: float = Field(
+        default=500.0, ge=0, description="Credits at least this large may be salary"
+    )
+    salary_pattern: str = Field(
+        default="", description="Case-insensitive text the salary credit's description contains"
     )
 
 
