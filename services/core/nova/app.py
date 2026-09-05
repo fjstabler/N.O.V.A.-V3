@@ -21,6 +21,7 @@ from typing import Any
 from .ai.orchestrator import Orchestrator
 from .config import SettingsStore, describe_settings
 from .context import NovaContext
+from .finance.service import FinanceService
 from .frigate_watch import FrigateService
 from .integrations.services import CalendarService, HomeLabService, HomeService
 from .memory.service import MemoryService
@@ -50,6 +51,10 @@ _SERVICE_SECTIONS: dict[str, tuple[str, ...]] = {
     "home": ("home_assistant", "mqtt"),
     "homelab": ("homelab",),
     "calendar": ("calendar",),
+    # Finance holds a webhook socket and a poll loop, both of which read
+    # settings once at start; a restart is how a changed threshold, provider or
+    # payday takes effect without one of the process.
+    "finance": ("finance",),
 }
 
 
@@ -89,6 +94,7 @@ class NovaApplication:
         register(HomeService(self.ctx))
         register(HomeLabService(self.ctx))
         register(CalendarService(self.ctx))
+        register(FinanceService(self.ctx))
         register(SecurityService(self.ctx))
         register(PresenceService(self.ctx))
         register(FrigateService(self.ctx))
