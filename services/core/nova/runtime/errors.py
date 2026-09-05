@@ -127,6 +127,31 @@ class ConfirmationRequired(NovaError):
         }
 
 
+class FinalAnswer(NovaError):
+    """A tool's own words, to be delivered unchanged.
+
+    Raised by a tool whose result must not go back to the model. Ordinary tool
+    results are appended to the message list and sent with the next request, so
+    a tool that returns figures is a tool that puts those figures in a prompt —
+    which is exactly what the finance module is forbidden from doing with bank
+    data.
+
+    It also fixes the phrasing. A model handed "£340 available, 11 days to
+    payday" will helpfully conclude "so yes, you can afford it", and a verdict
+    from a system its owner can reprogram is not a constraint — it is an
+    invitation to argue with the tool instead of reading the number.
+
+    Not an error despite the base class: raising is simply the only way a tool
+    can end a turn, since returning hands the value to the model.
+    """
+
+    code = "nova.final_answer"
+
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        self.text = text
+
+
 class IntegrationError(NovaError):
     code = "nova.integration"
 

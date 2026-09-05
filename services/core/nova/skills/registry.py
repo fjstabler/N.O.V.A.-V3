@@ -32,7 +32,7 @@ from typing import Any
 
 from ..context import NovaContext
 from ..runtime import Service, Topics
-from ..runtime.errors import ConfirmationRequired, SkillError, ToolExecutionError
+from ..runtime.errors import ConfirmationRequired, FinalAnswer, SkillError, ToolExecutionError
 from .base import Skill, SkillInfo, ToolSpec
 
 #: How long a pending destructive action stays confirmable.
@@ -322,6 +322,12 @@ class SkillRegistry(Service):
             raise ToolExecutionError(spec.qualified_name, f"bad arguments: {exc}") from exc
         except TimeoutError as exc:
             raise ToolExecutionError(spec.qualified_name, "timed out after 120s") from exc
+        except FinalAnswer:
+            # Must pass through untouched. The broad clause below would turn it
+            # into a ToolExecutionError whose message is the answer — which the
+            # orchestrator then sends to the model as "Error: ...", putting in a
+            # prompt precisely what raising it exists to keep out.
+            raise
         except SkillError:
             raise
         except Exception as exc:

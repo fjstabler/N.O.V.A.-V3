@@ -24,7 +24,7 @@ from typing import Any
 
 from ..context import NovaContext
 from ..runtime import NovaState, Service, Topics
-from ..runtime.errors import ConfirmationRequired, NovaError
+from ..runtime.errors import ConfirmationRequired, FinalAnswer, NovaError
 from ..skills.registry import SkillRegistry
 from .anthropic_client import AnthropicClient
 from .client import Completion, OpenAIClient, ReasoningUnavailable, ToolCall
@@ -319,6 +319,13 @@ class Orchestrator(Service):
                 if isinstance(outcome, ConfirmationRequired):
                     return await self._ask_for_confirmation(outcome, used)
                 used.append(call.name)
+                if isinstance(outcome, FinalAnswer):
+                    # Deliberately never appended to `messages`. A tool result
+                    # is sent verbatim with the next request, so appending this
+                    # one would put in a prompt exactly what raising it exists
+                    # to keep out — and would let the model rewrite wording that
+                    # is fixed on purpose.
+                    return await self._speak_result(outcome.text, tools_used=used)
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": outcome})
 
         self.log.warning("tool_iteration_limit", limit=settings.max_tool_iterations)
@@ -379,6 +386,8 @@ class Orchestrator(Service):
         try:
             result = await registry.call(call.name, call.arguments)
         except ConfirmationRequired as exc:
+            return exc
+        except FinalAnswer as exc:
             return exc
         except NovaError as exc:
             return f"Error: {exc.message}"
