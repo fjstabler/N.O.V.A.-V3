@@ -32,6 +32,14 @@ models/
 *.bin
 !**/placeholder.bin
 
+# Finance credentials. Listed before any credential-handling code was written,
+# which is the only order that helps: a secret is in the history from the first
+# commit that includes it, and removing it afterwards does not remove it.
+finance.env
+finance.env.*
+!finance.env.example
+**/finance.env
+
 # Local user data (never commit — contains API keys + memory)
 .nova/
 *.db
