@@ -83,6 +83,20 @@ async function connected(): Promise<{ client: BridgeClient; socket: FakeSocket }
   return { client, socket };
 }
 
+/**
+ * For a request that is fired to inspect what went out and then abandoned.
+ *
+ * `close()` rejects everything still in flight, which is correct behaviour and
+ * not what such a test is about — but an unhandled rejection fails the entire
+ * vitest run even when every assertion passed, and the report blames whichever
+ * test happened to be running when the microtask surfaced. Awaiting the
+ * returned promise keeps the rejection accounted for and the failure attached
+ * to the test that caused it.
+ */
+function expectRejected(promise: Promise<unknown>): Promise<unknown> {
+  return promise.catch(() => undefined);
+}
+
 beforeEach(() => {
   FakeSocket.instances = [];
   vi.stubGlobal('WebSocket', FakeSocket);
@@ -250,21 +264,27 @@ describe('message ids', () => {
     });
 
     const { client, socket } = await connected();
-    void client.request('settings.get');
+    // Nothing ever answers it and `close()` below rejects it, which is fine —
+    // the id is what is under test. `void` alone leaves that rejection
+    // unhandled, and vitest fails the whole run on one of those even when
+    // every test passes.
+    const pending = expectRejected(client.request('settings.get'));
 
     const sent = JSON.parse(socket.sent[0]!);
     expect(sent.id).toMatch(/^[0-9a-f]{32}$/);
     client.close();
+    await pending;
   });
 
   it('fall back again when there is no crypto at all', async () => {
     vi.stubGlobal('crypto', undefined);
 
     const { client, socket } = await connected();
-    void client.request('settings.get');
+    const pending = expectRejected(client.request('settings.get'));
 
     expect(JSON.parse(socket.sent[0]!).id).toBeTruthy();
     client.close();
+    await pending;
   });
 });
 
