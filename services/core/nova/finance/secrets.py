@@ -79,19 +79,21 @@ def load(data_dir: Path) -> FinanceSecrets:
     return FinanceSecrets(values, path)
 
 
-def write_example(data_dir: Path) -> Path:
-    """Drop a `finance.env.example` next to where the real one goes."""
+#: The template shipped with the package. Copied rather than regenerated, so
+#: the instructions somebody reads next to their real credentials are the same
+#: ones in the repository rather than a second copy that drifts.
+TEMPLATE = Path(__file__).with_name(f"{FILENAME}.example")
+
+
+def write_example(data_dir: Path) -> Path | None:
+    """Drop a `finance.env.example` next to where the real one goes.
+
+    So the first thing anyone finds when they go looking for where the token
+    goes is a file telling them, in the directory it belongs in.
+    """
+    if not TEMPLATE.is_file():  # pragma: no cover - only if packaging drops it
+        log.warning("finance_secrets_template_missing", expected=str(TEMPLATE))
+        return None
     path = data_dir / f"{FILENAME}.example"
-    path.write_text(
-        "# N.O.V.A. finance credentials. Copy to finance.env and chmod 600.\n"
-        "# Read only by nova/finance; never by the settings panel, and never\n"
-        "# included in a settings export.\n"
-        "\n"
-        "# Starling personal access token, from developer.starlingbank.com\n"
-        "NOVA_FINANCE_TOKEN=\n"
-        "\n"
-        "# Shared secret the bank signs webhooks with, if webhooks are enabled\n"
-        "NOVA_FINANCE_WEBHOOK_SECRET=\n",
-        encoding="utf-8",
-    )
+    path.write_text(TEMPLATE.read_text(encoding="utf-8"), encoding="utf-8")
     return path

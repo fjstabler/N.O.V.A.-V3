@@ -29,6 +29,11 @@ SECTIONS: list[tuple[str, str, str]] = [
     ("home_assistant", "Home Assistant", "Smart home control"),
     ("mqtt", "MQTT", "Message broker for devices and automations"),
     ("calendar", "Calendar", "CalDAV accounts and reminders"),
+    # No bank token in this panel, and there never will be: it lives in
+    # finance.env at 0600 in the data directory. What is here is the shape of
+    # the month — payday, what is already spoken for, what counts as a large
+    # spend — which is exactly the part worth editing from a wall panel.
+    ("finance", "Money", "Payday, committed outgoings, cooling-off and alerts"),
     ("server", "Server", "Ubuntu monitoring and administration"),
     ("desktop", "Desktop", "Open pages, files and apps on this machine"),
     ("routines", "Routines", "Saved phrases that run several home actions at once"),
