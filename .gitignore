@@ -1,0 +1,68 @@
+# ---- Node / Electron ----
+# services/core/nova/webapp/static is build output too, but it is deliberately
+# committed: it is what the core serves at /app/, and a box running only the
+# Python service should not need a Node toolchain to put a screen on a wall.
+node_modules/
+dist/
+dist-electron/
+release/
+out/
+*.tsbuildinfo
+.vite/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ---- NOVA runtime state ----
+# Models are large binaries fetched by scripts/fetch-models.py
+models/
+*.onnx
+*.bin
+!**/placeholder.bin
+
+# Finance credentials. Listed before any credential-handling code was written,
+# which is the only order that helps: a secret is in the history from the first
+# commit that includes it, and removing it afterwards does not remove it.
+finance.env
+finance.env.*
+!finance.env.example
+**/finance.env
+
+# Local user data (never commit — contains API keys + memory)
+.nova/
+*.db
+*.db-wal
+*.db-shm
+config.local.toml
+
+# ---- Android panel ----
+apps/panel/build/
+apps/panel/app/build/
+apps/panel/.gradle/
+apps/panel/local.properties
+*.apk
+*.aab
+*.keystore
+# …except the one checked in so a device with no developer tooling can still
+# install the panel. See apps/panel/prebuilt/README.md.
+!apps/panel/prebuilt/*.apk
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log

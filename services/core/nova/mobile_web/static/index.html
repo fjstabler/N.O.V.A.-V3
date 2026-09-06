@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+  <title>N.O.V.A.</title>
+
+  <!-- iOS "Add to Home Screen": these matter more than manifest.webmanifest on iPhone. -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="N.O.V.A." />
+  <link rel="apple-touch-icon" href="/icon-512.png" />
+
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#05070d" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="bar">
+      <span class="dot" id="status-dot"></span>
+      <span id="status-text">Connecting…</span>
+    </header>
+
+    <section id="pairing" class="pairing" hidden>
+      <h1>Connect to N.O.V.A.</h1>
+      <p>Paste the connection token from Settings on the box at home.</p>
+      <input id="token-input" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="token" />
+      <button id="token-save">Connect</button>
+    </section>
+
+    <!-- Opened by a ?camera= link — a room-watch alert's own notification
+         points straight here, same slug format the desktop app's camera
+         surface uses (see transport/server.py's /camera/ route). -->
+    <section id="camera-view" class="camera-view" hidden>
+      <header class="camera-view__bar">
+        <h1 id="camera-view-title" class="camera-view__title"></h1>
+        <button type="button" id="camera-view-close" class="camera-view__close" aria-label="Close">✕</button>
+      </header>
+      <img id="camera-view-image" class="camera-view__image" alt="" />
+      <div id="camera-view-error" class="camera-view__error" hidden>
+        <p>Couldn't load the camera. It may be offline, or N.O.V.A. isn't reachable right now.</p>
+        <button type="button" id="camera-view-back" class="camera-view__back">Back to N.O.V.A.</button>
+      </div>
+    </section>
+
+    <!-- The Core is the control: press and hold it to talk, same as the
+         desktop app is built around it rather than a chrome of buttons. -->
+    <section class="stage" id="stage" aria-label="Hold to talk to N.O.V.A.">
+      <canvas id="core"></canvas>
+      <p class="stage__caption" id="stage-caption">Hold to talk</p>
+      <p class="stage__line" id="stage-line"></p>
+    </section>
+
+    <section id="conversation" class="conversation" aria-live="polite"></section>
+
+    <!-- The one element every reply is played through — see app.js for why
+         reusing a single element (rather than a new Audio() per reply)
+         matters for staying unlocked on iOS. -->
+    <audio id="player" playsinline hidden></audio>
+
+    <footer class="controls">
+      <form id="text-form" class="text-form">
+        <input id="text-input" type="text" placeholder="Type instead…" autocomplete="off" autocapitalize="sentences" />
+        <button type="submit" aria-label="Send">➤</button>
+      </form>
+    </footer>
+  </main>
+
+  <script src="/core.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

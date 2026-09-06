@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The web app's bg-void token, so the native frame and the page it hosts
+         are the same black and a load never flashes a lighter frame. -->
+    <color name="void_bg">#04060D</color>
+    <color name="accent">#3D94FF</color>
+    <color name="text_primary">#E9F0FF</color>
+    <color name="text_secondary">#BECDE8</color>
+</resources>
