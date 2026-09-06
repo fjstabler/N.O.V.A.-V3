@@ -1,9 +1,11 @@
 """Starling, read-only except for one deliberate exception.
 
 Personal access tokens rather than OAuth: Starling issues them to account
-holders directly, they do not expire on a schedule, and there is no refresh
-dance to get wrong. Monzo would need the refresh handling the brief describes;
-that belongs in a `monzo.py` next to this one, behind the same interface.
+holders directly, so there is no refresh cycle to get wrong — a token either
+works or it does not, and replacing an expired one means minting another and
+restarting, not a background renewal that can silently stop. Monzo would need
+the refresh handling the brief describes; that belongs in a `monzo.py` next to
+this one, behind the same interface.
 
 Every method here is a GET apart from `move_to_pot`, which is the single write
 the brief permits and which nothing calls unless transfers are explicitly
