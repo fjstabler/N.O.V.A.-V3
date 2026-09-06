@@ -34,6 +34,9 @@ SECTIONS: list[tuple[str, str, str]] = [
     # the month — payday, what is already spoken for, what counts as a large
     # spend — which is exactly the part worth editing from a wall panel.
     ("finance", "Money", "Payday, committed outgoings, cooling-off and alerts"),
+    # The Twilio token and the inbound PIN are not here for the same reason
+    # the bank token is not: this panel is on every screen in the house.
+    ("phone", "Telephone", "Calls in and out, and when it may ring you"),
     ("server", "Server", "Ubuntu monitoring and administration"),
     ("desktop", "Desktop", "Open pages, files and apps on this machine"),
     ("routines", "Routines", "Saved phrases that run several home actions at once"),

@@ -517,6 +517,80 @@ class PresenceSettings(BaseModel):
     match_threshold: float = Field(default=0.363, ge=0.0, le=1.0)
 
 
+class PhoneSettings(BaseModel):
+    """N.O.V.A. on the telephone.
+
+    A call is the same assistant with the wake word removed: it listens from
+    connect to hang-up, runs until the conversation ends rather than for a
+    six-second window, and can be interrupted mid-sentence.
+
+    It can also start the conversation, which nothing else here does. An
+    outbound call opens by saying why it rang — that sentence is built from the
+    transaction by `phone.phrasing`, not written by a model, for the same
+    reason every other spoken figure is.
+
+    No credentials in this section. The Twilio auth token and the inbound PIN
+    live in `finance.env` beside the bank token, at 0600, for the same reasons:
+    this file is written by the settings panel, sent to every client and
+    restored from exports.
+    """
+
+    enabled: bool = False
+    #: E.164, e.g. +447700900123. Where outbound calls go, and the only number
+    #: an inbound call is trusted to be from before the PIN is asked for.
+    my_number: str = Field(default="", description="Your mobile, in +44... form")
+    from_number: str = Field(
+        default="", description="The Twilio number calls come from, in +44... form"
+    )
+    account_sid: str = Field(default="", description="Twilio account SID (not a secret)")
+
+    #: Where Twilio reaches this machine. A tunnel or reverse proxy in front of
+    #: the listener below; the LXC has no public address of its own.
+    public_url: str = Field(
+        default="", description="Public https:// base URL Twilio can reach, no trailing slash"
+    )
+    host: str = Field(default="127.0.0.1", description="Address the call listener binds to")
+    port: int = Field(default=8771, ge=1, le=65535, description="Port the call listener binds to")
+
+    # ------------------------------------------------------------ conversation
+    answer_inbound: bool = Field(default=True, description="Answer calls as well as making them")
+    require_pin: bool = Field(
+        default=True,
+        description="Ask for the PIN before answering anything on an inbound call. Caller ID "
+        "is a field the caller fills in, not evidence, so leaving this off means anyone who "
+        "learns the number can ask what is in your account.",
+    )
+    silence_hangup_seconds: float = Field(
+        default=12.0, ge=3.0, le=120.0, description="Hang up after this long with nobody speaking"
+    )
+    max_call_seconds: float = Field(
+        default=600.0,
+        ge=30.0,
+        le=3600.0,
+        description="Hard cap on one call. A stuck call is billed by the minute.",
+    )
+    honorific: str = Field(
+        default="sir", description="How an outbound call addresses you: 'sir', 'madam', a name"
+    )
+
+    # ------------------------------------------------------------------ alerts
+    call_on_large_spend: bool = Field(
+        default=False,
+        description="Ring you to check a large debit was yours. Off until you mean it — this "
+        "is the one feature here that makes the phone ring on its own.",
+    )
+    call_threshold: float = Field(
+        default=200.0,
+        ge=0,
+        description="Debits at or above this are worth a call rather than a notification. "
+        "Separate from the alert threshold, and normally higher.",
+    )
+    quiet_from: str = Field(
+        default="22:00", description="No outbound calls after this, HH:MM. Empty to disable."
+    )
+    quiet_until: str = Field(default="08:00", description="No outbound calls before this, HH:MM")
+
+
 class CommittedOutgoing(BaseModel):
     """A payment that is already spoken for: rent, a subscription, a phone bill."""
 
@@ -719,6 +793,7 @@ class NovaSettings(BaseModel):
     homelab: HomeLabSettings = Field(default_factory=HomeLabSettings)
     vision: VisionSettings = Field(default_factory=VisionSettings)
     finance: FinanceSettings = Field(default_factory=FinanceSettings)
+    phone: PhoneSettings = Field(default_factory=PhoneSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     frigate: FrigateSettings = Field(default_factory=FrigateSettings)
     personwatch: PersonWatchSettings = Field(default_factory=PersonWatchSettings)
