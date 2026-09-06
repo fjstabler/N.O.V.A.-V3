@@ -320,3 +320,67 @@ async def test_a_missing_token_is_a_clear_error_not_a_crash(
 
     with pytest.raises(SkillError, match="NOVA_FINANCE_TOKEN"):
         await module.affordability()
+
+
+# ------------------------------------------------------- the way back in
+
+
+class RecordingMemory:
+    """Stands in for the memory service, keeping what it was asked to store."""
+
+    name = "memory"
+    running = True
+
+    def __init__(self) -> None:
+        self.turns: list[tuple[str, str]] = []
+        self.facts: list[str] = []
+
+    async def recall(self, _text: str) -> list[Any]:
+        return []
+
+    async def working_context(self) -> list[Any]:
+        return []
+
+    async def record_turn(self, role: str, content: str, **_: Any) -> None:
+        self.turns.append((role, content))
+
+    async def remember(self, text: str, **_: Any) -> None:
+        self.facts.append(text)
+
+
+async def test_a_final_answer_is_not_written_into_the_conversation(ctx: NovaContext) -> None:
+    """The second way a balance reaches a prompt, and the one that took longest
+    to see.
+
+    Keeping the answer out of the tool results is only half of it. The turn's
+    reply is then recorded as conversation history and as a remembered fact,
+    and history is sent with the *next* request — so one finance question
+    followed by any other question puts the balance in a prompt after all. A
+    phone call is a long multi-turn conversation, which is exactly where this
+    would bite hardest.
+    """
+    from nova.ai.orchestrator import Orchestrator, TurnResult
+
+    memory = RecordingMemory()
+    ctx.services.register(memory)  # type: ignore[arg-type]
+    orchestrator = Orchestrator(ctx)
+
+    private = TurnResult(text="£340 available. 13 days until payday.", private=True)
+    await orchestrator._remember_turn("how much have I got", private)
+
+    assert memory.facts == [], "a balance must not become a remembered fact"
+    assert "£340" not in " ".join(content for _, content in memory.turns)
+
+
+async def test_an_ordinary_reply_is_still_remembered(ctx: NovaContext) -> None:
+    """The fix must not cost the assistant its memory of everything else."""
+    from nova.ai.orchestrator import Orchestrator, TurnResult
+
+    memory = RecordingMemory()
+    ctx.services.register(memory)  # type: ignore[arg-type]
+    orchestrator = Orchestrator(ctx)
+
+    await orchestrator._remember_turn("what's the weather", TurnResult(text="17 degrees and dry"))
+
+    assert ("assistant", "17 degrees and dry") in memory.turns
+    assert memory.facts, "ordinary exchanges are still worth keeping"

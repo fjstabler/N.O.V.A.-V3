@@ -77,6 +77,12 @@ class TurnResult:
     error: str | None = None
     duration_ms: int = 0
     awaiting_confirmation: bool = False
+    #: The reply must not be written into conversation history or memory.
+    #: Set for a `FinalAnswer`, whose whole purpose is that the model never
+    #: sees the text — and history is sent with the next request, so recording
+    #: it would deliver on the following turn exactly what raising it prevented
+    #: on this one.
+    private: bool = False
 
 
 class Orchestrator(Service):
@@ -279,19 +285,45 @@ class Orchestrator(Service):
             await memory.record_turn("user", text)
 
         result = await self._reason(messages, registry)
-
-        if memory is not None and result.text:
-            await memory.record_turn("assistant", result.text, tools=result.tools_used)
-            # Store the exchange itself at low importance; the model promotes
-            # anything worth keeping via the explicit remember tool.
-            await memory.remember(
-                summarise_for_memory(text, result.text),
-                subject="conversation",
-                importance=0.2,
-                source="turn",
-                ttl_seconds=14 * 86400,
-            )
+        await self._remember_turn(text, result)
         return result
+
+    #: Stands in for a private reply in the conversation history. The turn has
+    #: to be there or the next one reads as though nothing was said, but its
+    #: content must not be.
+    PRIVATE_PLACEHOLDER = "(answered from local data; the figures were not shown to me)"
+
+    async def _remember_turn(self, text: str, result: TurnResult) -> None:
+        """Record the exchange — unless the reply was never ours to keep.
+
+        A `FinalAnswer` is raised precisely so its text stays out of the
+        model's context. Writing it here would put it back: history goes into
+        the next request, and a remembered fact can surface in any request for
+        the next fortnight. So one finance question followed by any other
+        question would have sent the balance after all.
+
+        The turn is still recorded, as a placeholder, so the conversation does
+        not develop a hole where an answer was. That matters most in a long
+        exchange — a phone call — where "what about the one before?" needs the
+        model to know it just answered something.
+        """
+        memory = self.ctx.service("memory")
+        if memory is None or not result.text:
+            return
+        if result.private:
+            await memory.record_turn("assistant", self.PRIVATE_PLACEHOLDER)
+            return
+
+        await memory.record_turn("assistant", result.text, tools=result.tools_used)
+        # Store the exchange itself at low importance; the model promotes
+        # anything worth keeping via the explicit remember tool.
+        await memory.remember(
+            summarise_for_memory(text, result.text),
+            subject="conversation",
+            importance=0.2,
+            source="turn",
+            ttl_seconds=14 * 86400,
+        )
 
     async def _reason(
         self, messages: list[dict[str, Any]], registry: SkillRegistry | None
@@ -325,7 +357,7 @@ class Orchestrator(Service):
                     # one would put in a prompt exactly what raising it exists
                     # to keep out — and would let the model rewrite wording that
                     # is fixed on purpose.
-                    return await self._speak_result(outcome.text, tools_used=used)
+                    return await self._speak_result(outcome.text, tools_used=used, private=True)
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": outcome})
 
         self.log.warning("tool_iteration_limit", limit=settings.max_tool_iterations)
@@ -438,11 +470,17 @@ class Orchestrator(Service):
 
     # ---------------------------------------------------------------- speaking
 
-    async def _speak_result(self, text: str, *, tools_used: list[str] | None = None) -> TurnResult:
+    async def _speak_result(
+        self,
+        text: str,
+        *,
+        tools_used: list[str] | None = None,
+        private: bool = False,
+    ) -> TurnResult:
         """Emit a complete reply that did not come from the streaming path."""
         self.bus.publish(Topics.TURN_TEXT, {"text": text, "final": True}, source=self.name)
         await self._synthesise(text)
-        return TurnResult(text=text, tools_used=tools_used or [])
+        return TurnResult(text=text, tools_used=tools_used or [], private=private)
 
     async def _synthesise(self, text: str) -> None:
         # A mobile reply is synthesised separately for the phone that asked
