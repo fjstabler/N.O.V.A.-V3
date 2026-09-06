@@ -32,6 +32,9 @@ CACHE_MAX_CHARS = 60
 
 _MARKDOWN = re.compile(r"[*_`#>]|\[(.*?)]\(.*?\)")
 _WHITESPACE = re.compile(r"\s+")
+
+#: An amount of money, with optional thousands separators and pence.
+_MONEY = re.compile(r"(-\s*|minus\s+)?£\s*(\d[\d,]*)(?:\.(\d{1,2}))?")
 _ABBREVIATIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(\d)\s*%"), r"\1 percent"),
     (re.compile(r"(\d)\s*°C\b"), r"\1 degrees"),
@@ -47,7 +50,11 @@ _ABBREVIATIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bSSH\b"), "S S H"),
     (re.compile(r"\bIP\b"), "I P"),
     (re.compile(r"\bAPI\b"), "A P I"),
-    (re.compile(r"\bN\.O\.V\.A\.\b"), "Nova"),
+    # No trailing \b: a word boundary after the final dot needs a word
+    # character to follow it, so the anchored version never fired at the end of
+    # a sentence — which is where the name almost always sits. She has been
+    # introducing herself as "N. O. V. A." this whole time.
+    (re.compile(r"\bN\.O\.V\.A\."), "Nova"),
 )
 
 
@@ -147,9 +154,38 @@ class Synthesiser:
         self._cache.clear()
 
 
+def _say_money(match: re.Match[str]) -> str:
+    """`£8.63` as somebody would say it: "8 pounds 63", not "pound 8 point 6 3".
+
+    The symbol sits before the number and gets read there, and a decimal point
+    in a price is not a decimal point out loud — nobody says "eight point six
+    three pounds". Digits are left for the synthesiser to expand, which it does
+    correctly; the job here is only to get the words and their order right.
+    """
+    sign = "minus " if match.group(1) else ""
+    pounds = int(match.group(2).replace(",", ""))
+    # "£8.5" is fifty pence, not five: the pence field is padded, not parsed
+    # as a fraction.
+    pence = int((match.group(3) or "").ljust(2, "0") or 0)
+
+    if pounds and pence:
+        unit = "pound" if pounds == 1 else "pounds"
+        if pence < 10:
+            # "eight pounds five" would be heard as £8.50. Said in full instead.
+            coins = "penny" if pence == 1 else "pence"
+            return f"{sign}{pounds} {unit} and {pence} {coins}"
+        return f"{sign}{pounds} {unit} {pence}"
+    if pounds:
+        return f"{sign}{pounds} {'pound' if pounds == 1 else 'pounds'}"
+    if pence:
+        return f"{sign}{pence} {'penny' if pence == 1 else 'pence'}"
+    return "nothing"
+
+
 def normalise_for_speech(text: str) -> str:
     """Rewrite text so it is read aloud the way a person would say it."""
     cleaned = _MARKDOWN.sub(r"\1", text)
+    cleaned = _MONEY.sub(_say_money, cleaned)
     for pattern, replacement in _ABBREVIATIONS:
         cleaned = pattern.sub(replacement, cleaned)
     cleaned = cleaned.replace("→", " to ").replace("—", ", ").replace("…", ".")
