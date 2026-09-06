@@ -7,14 +7,21 @@ in a prompt. Raising ends the turn with the module's own sentence and the
 figures never leave the machine.
 
 It also fixes the wording. Handed "£340 available, 11 days to payday", a model
-will helpfully add "so yes, you can afford it" — and a verdict from a system
-its owner can reprogram is not a limit, it is something to argue with. The
-module answers with numbers and stops.
+will improvise a verdict, differently each time, from figures it half
+understands. The module does recommend things now — `should_i_buy` exists
+because the owner asked for an advisor rather than a reporter — but the
+recommendation is worked out from the numbers here, by the same thresholds
+every time, and arrives as a finished sentence.
+
+The model's contribution is one judgement: whether the thing is a need or a
+want. That is a question about the item and not about the money, so it can be
+answered without seeing an account, which is exactly why the line is drawn
+there.
 """
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from ...finance.module import FinanceModule
 from ...finance.service import FinanceService
@@ -33,9 +40,10 @@ class FinanceSkill(Skill):
 
     prompt_hint = (
         "Money questions go to the finance tools. They answer directly and their replies "
-        "are final — do not restate, summarise or add to them, and never offer an opinion "
-        "on whether a purchase is sensible. You will not see the figures, which is "
-        "deliberate."
+        "are final — do not restate, summarise or add to them. You will not see any "
+        "figures, which is deliberate. For 'should I buy this', use finance_should_i_buy "
+        "and judge only whether the item is a need or a want, from what the item is. You "
+        "have no idea what they can afford and must not guess; the tool does the rest."
     )
 
     #: Only used when the finance service is not running — see `_finance`.
@@ -76,6 +84,28 @@ class FinanceSkill(Skill):
     ) -> str:
         finance = await self._finance()
         raise FinalAnswer(await finance.affordability(amount))
+
+    @tool(
+        "Whether to buy something now or wait, with the reasoning. Use for 'should I "
+        "buy X', 'is it a good idea to get X', 'can I justify X'. You classify the "
+        "item; the tool weighs it against money you cannot see."
+    )
+    async def should_i_buy(
+        self,
+        item: Annotated[str, Param("What they are thinking of buying")],
+        amount: Annotated[float, Param("Price in pounds")],
+        kind: Annotated[
+            Literal["need", "want"],
+            Param(
+                "Your judgement of the item itself, ignoring their finances entirely — "
+                "'need' for food, medicine, repairs, travel to work, replacing something "
+                "broken and depended on; 'want' for everything discretionary. If it is "
+                "genuinely borderline, say want."
+            ),
+        ],
+    ) -> str:
+        finance = await self._finance()
+        raise FinalAnswer(await finance.advise(item, amount, kind))
 
     @tool("What is still due to leave the account before payday, and the balance behind it.")
     async def committed(self) -> str:

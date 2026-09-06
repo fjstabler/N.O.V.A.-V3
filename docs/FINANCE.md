@@ -20,8 +20,11 @@ The five rules the module is built to, all of them enforced by tests in
    read by this module and nothing else. It is not a setting, so it is not in
    `config.toml`, not sent to a client, not in a settings export, and not in
    the settings panel.
-3. **It reports, it does not decide.** No answer resolves to yes or no. You get
-   the figures; the judgement is yours.
+3. ~~**It reports, it does not decide.**~~ **Reversed at the owner's request.**
+   The module now recommends — *"if it were me I'd wait"* — but the
+   recommendation is arithmetic done here, not a model improvising about your
+   balance. Set `advice: false` to put the original behaviour back. See
+   [Advice](#advice).
 4. **Read-only by default.** One write exists — the payday transfer — and it is
    off, behind a second dry-run switch that is also on, behind a hard cap.
 5. **Local persistence only.** SQLite, in your data directory, at 0600.
@@ -37,6 +40,17 @@ answer either way:
 Available is the balance minus everything still due to leave before payday, so
 the phone bill on the 20th is already taken off. Payday moves off weekends and
 bank holidays the way your employer's does.
+
+**Advice.** *"Should I buy a Nintendo Switch for £300?"*
+
+> A Nintendo Switch at £300 is a want rather than a need. It leaves £140 for
+> the 13 days to payday, which is £10.77 a day — doable, not comfortable. If it
+> were me I'd sleep on it.
+
+And *"can I afford £20?"* gets the same judgement in one line on the end: *"That
+is comfortable, with room to spare."*
+
+See [Advice](#advice) for how that works without your balance reaching a model.
 
 **Large-spend alerts.** A debit over the threshold and N.O.V.A. says so:
 merchant, amount, what is left. Nothing else — a running commentary on your
@@ -136,6 +150,43 @@ retries — which are normal traffic, not an anomaly — produce one alert.
 
 Both paths can run at once. Whichever sees a transaction first alerts on it;
 the other finds it already claimed and stays quiet.
+
+## Advice
+
+The brief banned recommendations outright, and its reasoning was sound: a
+verdict from a system its owner can reprogram is something to argue with rather
+than a limit. The owner asked for an advisor anyway. This is how that was built
+without giving up the first constraint.
+
+**The question splits in two.** *"Is a Nintendo Switch a necessity?"* has
+nothing to do with your bank account — the model answers that, because it is
+the thing that knows what a Switch is. *"Does £300 leave enough room until
+payday?"* is arithmetic, done here. So the model is asked for exactly one word,
+`need` or `want`, and gets no figure in return: the reply is raised as a
+`FinalAnswer`, which ends the turn without ever entering the model's message
+list.
+
+A test pins the tool's parameters to `item`, `amount` and `kind`, so nobody can
+later add a `balance` argument the model would have to know to fill in.
+
+**The thresholds.** One knob, `daily_floor`, defaulting to £10. Take what a
+purchase would leave, divide by the days to payday:
+
+| Per day | A want | A need |
+|---|---|---|
+| Negative | "would put you £X overdrawn... I'd wait" | "...worth seeing what else can wait, or whether it can be split up" |
+| Under the floor | "I'd wait for payday on the 25th" | "less of a choice... tight" |
+| Floor to twice it | "doable, not comfortable — I'd sleep on it" | "less of a choice... tight" |
+| Over twice it | "I'd get it" | "I'd get it" |
+
+**A necessity is never told to wait**, at any figure, and a test enforces it.
+The module cannot tell a boiler repair from a prescription, so it must not tell
+you to skip either. What it does instead is say the overdraft is coming, which
+is the part you can act on.
+
+Raise `daily_floor` and the advice gets more cautious; lower it and it relaxes.
+Same figures always give the same answer — determinism is the proof no model is
+involved, since one asked twenty times does not reply identically twenty times.
 
 ## Transfers: the only write
 

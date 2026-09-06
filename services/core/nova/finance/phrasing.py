@@ -7,11 +7,17 @@ and lets the wording drift into a verdict.
 
 The affordability line is the shape the brief specifies, near enough word for
 word, because it is a good shape: what you have, how long it has to last, what
-the spend would leave, and what that is per day. No adjectives. Nothing that
-resolves to yes or no.
+the spend would leave, and what that is per day.
+
+`advice` and `comfort` at the bottom go further and recommend something, which
+the brief forbade and the owner has since asked for. They are still built here
+from figures rather than by a model, so what gets said is the same every time
+and no balance is ever sent anywhere to be phrased.
 """
 
 from __future__ import annotations
+
+from datetime import date
 
 from .budget import Affordability
 
@@ -98,3 +104,89 @@ def transfer_done(amount: float, destination: str, *, dry_run: bool) -> str:
     if dry_run:
         return f"Dry run: would move {money(amount)} into {destination}. Nothing was transferred."
     return f"Moved {money(amount)} into {destination}."
+
+
+def on_the(day: date) -> str:
+    """`the 25th` — how a date gets said out loud."""
+    number = day.day
+    suffix = "th" if 11 <= number <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
+    return f"the {number}{suffix}"
+
+
+def _opening(item: str, kind: str, price: str) -> str:
+    """ "A Nintendo Switch at £300 is a want rather than a need".
+
+    First letter raised rather than `.capitalize()`, which lowercases the rest
+    and turns every brand name into a common noun — "Nintendo switch",
+    "Iphone", "Dr martens".
+    """
+    what = item.strip() or "that"
+    what = what[0].upper() + what[1:]
+    tail = "a necessity" if kind == "need" else "a want rather than a need"
+    return f"{what} at {price} is {tail}"
+
+
+def advice(item: str, result: Affordability, *, kind: str, verdict: str) -> str:
+    """The recommendation, in the shape somebody actually asks for it.
+
+    Reason, then figures, then what it would do — and it says "if it were me",
+    because that is honestly what this is. A rule of thumb applied to a
+    balance, not a fact about whether the purchase is wise.
+
+    A necessity is never told to wait, even when it goes overdrawn. "Put off
+    the boiler repair" is not advice, it is a burst pipe; what is useful there
+    is knowing the overdraft is coming.
+    """
+    price = money(result.spend)
+    left = money(result.remaining_after_spend)
+    window = f"the {days(result.days_until_payday)} to payday"
+    rate = f"{money(result.per_day)} a day"
+    payday = on_the(result.payday)
+    opening = _opening(item, kind, price)
+
+    if verdict == "overdrawn":
+        short = money(abs(result.remaining_after_spend))
+        if kind == "need":
+            return (
+                f"{opening}, but it would put you {short} overdrawn before payday on "
+                f"{payday}. Worth seeing what else can wait, or whether it can be "
+                "split up."
+            )
+        return (
+            f"{opening}, and it would put you {short} overdrawn before payday on "
+            f"{payday}. If it were me I'd wait."
+        )
+    if verdict == "unavoidable":
+        return (
+            f"{opening}, so it is less of a choice. It leaves {left} for {window}, "
+            f"which is {rate} — tight. Worth seeing what else can wait."
+        )
+    if verdict == "wait":
+        return (
+            f"{opening}, and it leaves {left} for {window} — {rate}. "
+            f"If it were me I'd wait for payday on {payday}."
+        )
+    if verdict == "sleep_on_it":
+        return (
+            f"{opening}. It leaves {left} for {window}, which is {rate} — doable, "
+            "not comfortable. If it were me I'd sleep on it. Say you want to buy it "
+            "and I'll ask you again in a couple of days."
+        )
+    return f"{opening}, and it still leaves {left} for {window} — {rate}. If it were me I'd get it."
+
+
+def comfort(verdict: str, _result: Affordability) -> str:
+    """The judgement appended to "can I afford £20".
+
+    Short, and it repeats no figure: the sentence in front of it has just said
+    what the spend leaves and what that is per day. This answers the question
+    actually being asked, which is not "will the card work" but "does that
+    leave me enough room until payday".
+    """
+    if verdict == "overdrawn":
+        return "That would take you overdrawn before payday."
+    if verdict in ("wait", "unavoidable"):
+        return "That is tight for the time left."
+    if verdict == "sleep_on_it":
+        return "That works, but there is not much room in it."
+    return "That is comfortable, with room to spare."

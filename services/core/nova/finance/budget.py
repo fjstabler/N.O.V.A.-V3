@@ -1,9 +1,12 @@
 """Payday dates, committed outgoings, and what is actually left.
 
-Every function here is pure and every output is a number. Nothing in this file
-calls a model, and nothing in it returns a verdict — the brief is explicit that
-figures are the product, and it is right: a judgement from a system its owner
-can reprogram is not a constraint, it is something to argue with.
+Every function here is pure and nothing in it calls a model. Most of it returns
+numbers; `recommend` at the bottom returns a conclusion, which the brief
+originally forbade and the owner has since asked for. The reasoning behind the
+ban still holds — a verdict from a system its owner can reprogram is something
+to argue with rather than a limit — so the recommendation is at least computed
+here, from these numbers, deterministically, rather than by asking a model to
+have an opinion about somebody's bank balance.
 
 "Available" is the only figure that needs defining. It is the current balance
 minus the outgoings still due before the next payday, so it answers "what can I
@@ -16,6 +19,7 @@ from __future__ import annotations
 import calendar
 from dataclasses import dataclass
 from datetime import date, timedelta
+from typing import Literal
 
 #: England and Wales, generated rather than fetched — a finance module should
 #: not need the internet to know that a Monday in August is a bank holiday.
@@ -190,3 +194,44 @@ def assess(
         per_day=per_day,
         outgoings_due=due,
     )
+
+
+# ------------------------------------------------------------------- advice
+
+#: What the module is willing to conclude. Deliberately not a yes/no: "wait"
+#: and "sleep on it" are the useful answers, and "you cannot" is not one of
+#: them — it is somebody's own money and the card will work regardless.
+Verdict = Literal["overdrawn", "unavoidable", "wait", "sleep_on_it", "go_ahead"]
+
+
+def recommend(result: Affordability, *, kind: str, floor: float) -> Verdict:
+    """Turn the figures into a recommendation, here rather than in a model.
+
+    The brief forbade this outright and it was right about why: a verdict from
+    a system its owner can reprogram is something to argue with rather than a
+    limit. The owner asked for it anyway, which is their call — so it is done
+    the way that keeps the rest of the guarantees intact. The arithmetic and
+    the conclusion both happen on this machine, from these numbers, with no
+    model involved; same inputs, same verdict, every time.
+
+    What the model contributes is `kind`, its read on whether the thing is a
+    need or a want. That judgement is about the item and not about the money,
+    so making it requires no access to the account — which is the whole reason
+    the split is drawn here.
+    """
+    if result.remaining_after_spend < 0:
+        return "overdrawn"
+
+    comfortable = result.per_day >= floor * 2
+    if kind == "need":
+        # Never told to skip a necessity. The useful thing to say about an
+        # unavoidable purchase that leaves things tight is that it is tight,
+        # not that they should go without medicine — and anything short of
+        # comfortable is worth saying, since they are going to spend it either
+        # way and the warning is the only part they can act on.
+        return "go_ahead" if comfortable else "unavoidable"
+    if result.per_day < floor:
+        return "wait"
+    if not comfortable:
+        return "sleep_on_it"
+    return "go_ahead"

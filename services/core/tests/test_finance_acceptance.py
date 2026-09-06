@@ -127,9 +127,11 @@ def test_the_spoken_answer_is_built_from_numbers_not_by_a_model() -> None:
 # ------------------------------------------------------------- no verdicts
 
 
-async def test_no_answer_ever_says_yes_or_no(ctx: NovaContext, tmp_path: Path) -> None:
-    """Constraint 3. Whatever the figures, the module reports them and stops."""
-    configure(ctx, tmp_path)
+async def test_reporting_alone_offers_no_opinion(ctx: NovaContext, tmp_path: Path) -> None:
+    """Constraint 3, which the owner has since reversed — so this is now the
+    test for `advice: false`, the setting that puts the brief's behaviour back.
+    With it off the module reports figures and stops, exactly as before."""
+    configure(ctx, tmp_path, advice=False)
     module = make_module(ctx, tmp_path)
     await module.open()
 
@@ -137,6 +139,53 @@ async def test_no_answer_ever_says_yes_or_no(ctx: NovaContext, tmp_path: Path) -
         said = (await module.affordability(spend)).lower()
         for verdict in ("yes", "afford", "should", "cannot", "too much", "sorry"):
             assert verdict not in said, f"{verdict!r} in {said!r}"
+
+
+async def test_advice_recommends_without_forbidding(ctx: NovaContext, tmp_path: Path) -> None:
+    """What replaced constraint 3, and the line that is still held.
+
+    The module now says what it would do. What it must never do is claim
+    authority it does not have: it cannot stop the purchase, the card will work
+    regardless, and pretending otherwise is the thing that makes a limit into
+    something to argue with rather than something to think about."""
+    configure(ctx, tmp_path)
+    module = make_module(ctx, tmp_path)
+    await module.open()
+
+    for amount, kind in ((5.0, "want"), (500.0, "want"), (500.0, "need"), (5000.0, "need")):
+        said = (await module.advise("a thing", amount, kind)).lower()
+        for forbidding in ("you can't", "you cannot", "not allowed", "don't buy", "you must"):
+            assert forbidding not in said, f"{forbidding!r} in {said!r}"
+
+
+async def test_the_advice_is_arithmetic_not_a_model(ctx: NovaContext, tmp_path: Path) -> None:
+    """Twenty identical answers is not something a model produces."""
+    configure(ctx, tmp_path)
+    module = make_module(ctx, tmp_path)
+    await module.open()
+
+    said = {await module.advise("a Nintendo Switch", 300.0, "want") for _ in range(20)}
+
+    assert len(said) == 1
+
+
+def test_the_model_is_asked_about_the_item_and_nothing_else() -> None:
+    """The split that lets advice exist without breaking constraint 1.
+
+    The model judges whether the thing is a need or a want — a question about
+    the item, answerable with no access to the account. Every figure stays on
+    this machine. A parameter added here for a balance or a payday would make
+    the model a party to the numbers, so the schema is pinned."""
+    schema = FinanceSkill.should_i_buy.__nova_tool__  # type: ignore[attr-defined]
+    assert schema  # the decorator ran
+
+    from nova.skills.base import build_parameter_schema
+
+    fields = set(build_parameter_schema(FinanceSkill.should_i_buy)["properties"])
+
+    assert fields == {"item", "amount", "kind"}, (
+        "the model must be asked for the item, its price and its necessity — nothing else"
+    )
 
 
 # ------------------------------------------------------------------ webhooks

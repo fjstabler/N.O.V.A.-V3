@@ -14,7 +14,10 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from nova.finance.budget import (
+    Affordability,
     Outgoing,
     assess,
     bank_holidays,
@@ -23,6 +26,7 @@ from nova.finance.budget import (
     next_payday,
     outgoings_before,
     payday_in,
+    recommend,
 )
 from nova.finance.phrasing import affordability, money
 
@@ -224,3 +228,65 @@ def test_money_reads_the_way_a_person_says_it() -> None:
     assert money(12.7) == "£12.70"
     assert money(-45.5) == "-£45.50"
     assert money(1234.56) == "£1,234.56"
+
+
+# ------------------------------------------------------------------- advice
+
+
+def situation(balance: float, spend: float) -> Affordability:
+    """13 days to payday on the 25th, one £60 outgoing still to come."""
+    return assess(
+        balance=balance,
+        outgoings=[Outgoing("phone", 60, 20)],
+        today=date(2026, 9, 12),
+        payday_day=25,
+        spend=spend,
+    )
+
+
+@pytest.mark.parametrize("kind", ["need", "want"])
+def test_going_overdrawn_is_called_out_whatever_it_is_for(kind: str) -> None:
+    assert recommend(situation(200, 300), kind=kind, floor=10.0) == "overdrawn"
+
+
+def test_a_want_that_leaves_too_little_a_day_is_a_wait() -> None:
+    # £340 available, £300 spend, £40 over 13 days — about £3 a day.
+    assert recommend(situation(400, 300), kind="want", floor=10.0) == "wait"
+
+
+def test_a_want_with_some_room_is_worth_sleeping_on() -> None:
+    # £10.77 a day: above the floor, under twice it.
+    assert recommend(situation(500, 300), kind="want", floor=10.0) == "sleep_on_it"
+
+
+def test_a_want_with_plenty_behind_it_is_a_yes() -> None:
+    assert recommend(situation(900, 300), kind="want", floor=10.0) == "go_ahead"
+
+
+@pytest.mark.parametrize("balance", [360, 400, 500, 560, 600])
+def test_a_necessity_is_never_told_to_wait(balance: float) -> None:
+    """The rule that matters most here. Told to put off a boiler repair or a
+    prescription, the advice stops being advice — and the module cannot tell
+    which necessity it is looking at, so it must not tell anyone to skip any of
+    them. Tight is worth saying; 'wait' is not."""
+    verdict = recommend(situation(balance, 300), kind="need", floor=10.0)
+
+    assert verdict in ("unavoidable", "go_ahead")
+    assert verdict != "wait"
+
+
+def test_the_same_figures_always_give_the_same_verdict() -> None:
+    """Determinism is the proof no model is involved: asked twenty times, a
+    model does not answer identically twenty times."""
+    result = situation(500, 300)
+
+    assert len({recommend(result, kind="want", floor=10.0) for _ in range(20)}) == 1
+
+
+def test_the_floor_is_what_moves_the_line() -> None:
+    """The one tuning knob, and it has to actually tune something."""
+    result = situation(500, 300)  # £10.77 a day
+
+    assert recommend(result, kind="want", floor=5.0) == "go_ahead"
+    assert recommend(result, kind="want", floor=10.0) == "sleep_on_it"
+    assert recommend(result, kind="want", floor=20.0) == "wait"

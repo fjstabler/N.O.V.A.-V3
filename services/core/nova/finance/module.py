@@ -23,10 +23,13 @@ from . import phrasing, secrets
 from .adapters.base import Balance, BankAdapter
 from .adapters.csv_import import CsvAdapter
 from .adapters.starling import StarlingAdapter
-from .budget import Affordability, Outgoing, assess
+from .budget import Affordability, Outgoing, assess, recommend
 from .ledger import Ledger, Transaction
 
 log = get_logger(__name__)
+
+#: What counts as a necessity when the model says so in its own words.
+_NEEDS = frozenset({"need", "needs", "necessity", "necessary", "essential", "essentials"})
 
 
 class FinanceModule:
@@ -101,12 +104,52 @@ class FinanceModule:
     # -------------------------------------------------------------- questions
 
     async def affordability(self, spend: float = 0.0) -> str:
-        """ "What have I got" and "can I afford £200" — the same figures either way."""
-        return phrasing.affordability(await self._assess(max(0.0, spend)))
+        """ "What have I got" and "can I afford £200" — the same figures either way.
+
+        With advice on, a named spend also gets the conclusion: "can I afford
+        £20" is not really a question about whether the card will work, it is
+        a question about whether £20 leaves enough room between now and payday.
+        The same thresholds as `advise`, so the two can never disagree.
+        """
+        result = await self._assess(max(0.0, spend))
+        said = phrasing.affordability(result)
+        if spend <= 0 or not self._settings.advice:
+            return said
+        # No need/want judgement here — nobody said what the £20 was for, and
+        # "can I afford it" is a discretionary framing by default.
+        verdict = recommend(result, kind="want", floor=self._settings.daily_floor)
+        return f"{said} {phrasing.comfort(verdict, result)}"
 
     async def committed(self) -> str:
         """Why the available figure is lower than the balance."""
         return phrasing.committed_detail(await self._assess(0.0))
+
+    async def advise(self, item: str, amount: float, kind: str) -> str:
+        """ "Should I buy this?" — answered, rather than deflected with figures.
+
+        `kind` is the model's read on whether the thing is a need or a want,
+        which is a judgement about the item and not about the money: making it
+        needs no access to the account, which is exactly why it can be the
+        model's half of this. Everything numeric, and the conclusion drawn from
+        it, happens here.
+        """
+        if not item.strip():
+            raise SkillError("buy what?")
+        if amount <= 0:
+            raise SkillError("how much is it?")
+
+        result = await self._assess(amount)
+        if not self._settings.advice:
+            # Turned off: back to reporting, which is what the brief asked for
+            # and what anyone who did not ask for opinions should get.
+            return phrasing.affordability(result)
+
+        # Anything the model does not call a need is treated as a want. The
+        # failure that matters is the other way round — a want waved through as
+        # essential — so the default leans towards asking them to think.
+        settled = "need" if kind.strip().lower() in _NEEDS else "want"
+        verdict = recommend(result, kind=settled, floor=self._settings.daily_floor)
+        return phrasing.advice(item, result, kind=settled, verdict=verdict)
 
     # ------------------------------------------------------------ cooling off
 

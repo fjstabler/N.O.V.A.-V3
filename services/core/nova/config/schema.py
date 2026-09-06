@@ -599,6 +599,21 @@ class FinanceSettings(BaseModel):
         "which is only sensible when webhooks are arriving.",
     )
 
+    # ----------------------------------------------------------------- advice
+    advice: bool = Field(
+        default=True,
+        description="Recommend whether to buy something, rather than only reporting the "
+        "figures. The recommendation is worked out here from your own numbers and spoken "
+        "as-is; the model that heard the question still never sees a balance.",
+    )
+    daily_floor: float = Field(
+        default=10.0,
+        ge=0,
+        description="What a day needs to be worth. A purchase that would leave less than "
+        "this per day until payday gets a 'wait'; more than twice it gets a 'go ahead'. "
+        "A necessity is never told to wait, whatever the figure.",
+    )
+
     # ------------------------------------------------------------ cooling off
     cooling_off_hours: float = Field(
         default=48.0, ge=0.5, le=720, description="How long a wanted purchase waits before it asks"
