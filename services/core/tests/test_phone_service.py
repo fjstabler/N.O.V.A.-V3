@@ -166,9 +166,7 @@ def debit(amount: float = 250.0, merchant: str = "Currys") -> Transaction:
     )
 
 
-async def test_saying_it_was_not_you_records_a_dispute(
-    ctx: NovaContext, tmp_path: Path
-) -> None:
+async def test_saying_it_was_not_you_records_a_dispute(ctx: NovaContext, tmp_path: Path) -> None:
     service = await finance(ctx, tmp_path)
     assert service.module is not None
     transaction = debit()
