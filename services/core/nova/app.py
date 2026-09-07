@@ -27,6 +27,7 @@ from .integrations.services import CalendarService, HomeLabService, HomeService
 from .memory.service import MemoryService
 from .notifications import NotificationService
 from .personwatch import PersonWatchService
+from .phone.service import PhoneService
 from .presence import PresenceService
 from .runtime import NovaState, Topics, configure_logging, get_logger
 from .runtime.errors import NovaError
@@ -55,6 +56,9 @@ _SERVICE_SECTIONS: dict[str, tuple[str, ...]] = {
     # settings once at start; a restart is how a changed threshold, provider or
     # payday takes effect without one of the process.
     "finance": ("finance",),
+    # The phone holds a public listener, a tunnel subprocess and a webhook
+    # registration with Twilio; all three are set up once at start.
+    "phone": ("phone",),
 }
 
 
@@ -95,6 +99,7 @@ class NovaApplication:
         register(HomeLabService(self.ctx))
         register(CalendarService(self.ctx))
         register(FinanceService(self.ctx))
+        register(PhoneService(self.ctx))
         register(SecurityService(self.ctx))
         register(PresenceService(self.ctx))
         register(FrigateService(self.ctx))

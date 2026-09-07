@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from ..context import NovaContext
 from ..notifications import Level, Notification, NotificationService
+from ..phone import phrasing as phone_phrasing
 from ..runtime import Service
 from ..runtime.errors import DegradedCapability, SkillError
 from . import phrasing, secrets
@@ -196,6 +198,58 @@ class FinanceService(Service):
             body=phrasing.large_spend(transaction.merchant, transaction.amount, balance),
             level=Level.INFO,
         )
+        await self._maybe_ring(transaction)
+
+    async def _maybe_ring(self, transaction: Transaction) -> None:
+        """Above its own, higher threshold, a debit is worth a phone call.
+
+        Two thresholds rather than one: a notification is free and a ringing
+        phone is not. Something worth glancing at on the panel is not
+        necessarily worth interrupting somebody's evening for, and a feature
+        that rings too often gets turned off, at which point it is not there
+        for the transaction that mattered.
+        """
+        phone = self.ctx.service("phone")
+        if phone is None:
+            return
+        try:
+            rang = await phone.check_large_spend(
+                transaction.merchant,
+                transaction.amount,
+                on_answer=self._read_verdict(transaction),
+            )
+        except Exception as exc:  # noqa: BLE001 - a failed call must not lose the alert
+            self.log.warning("finance_call_failed", error=str(exc)[:200])
+            return
+        if rang:
+            self.log.info("finance_called_about", amount=abs(transaction.amount))
+
+    def _read_verdict(self, transaction: Transaction) -> Any:
+        """Read "yes that was me" or "no it wasn't", and answer it.
+
+        Locally, from a fixed list, and not by a model. A fraud check is the
+        one exchange where a plausible invented reply is worst: told "no", the
+        useful answer is who to ring, and the module must not imply it has
+        frozen anything, because it cannot.
+        """
+
+        async def answer(said: str) -> str:
+            module = self.module
+            verdict = phone_phrasing.reading(said)
+            if verdict == "no":
+                if module is not None:
+                    await module.ledger.dispute(transaction.id)
+                self.log.warning("transaction_disputed", merchant=transaction.merchant)
+                return phone_phrasing.disputed()
+            if verdict == "yes":
+                self.log.info("transaction_confirmed")
+                return phone_phrasing.confirmed()
+            # Neither — ask once more rather than guessing on this of all
+            # questions. A second unclear answer falls through to the model,
+            # which is the right place for "hang on, what was the amount?".
+            return phone_phrasing.unclear()
+
+        return answer
 
     async def _on_salary(self, transaction: Transaction) -> None:
         module = self.module

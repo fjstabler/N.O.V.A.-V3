@@ -70,6 +70,10 @@ _NEGATIVE = frozenset(
 )
 
 
+#: Sources whose reply is spoken somewhere other than the local speaker.
+_ELSEWHERE = frozenset({"mobile", "phone"})
+
+
 @dataclass(slots=True)
 class TurnResult:
     text: str = ""
@@ -484,10 +488,12 @@ class Orchestrator(Service):
 
     async def _synthesise(self, text: str) -> None:
         # A mobile reply is synthesised separately for the phone that asked
-        # (see app.py's _mobile_audio) — the box at home must not also
-        # announce a query nobody there asked, possibly made by someone who
-        # is not even in the house.
-        if self._current_source == "mobile":
+        # (see app.py's _mobile_audio), and a telephone call carries its own
+        # audio down the line — the box at home must not also announce a query
+        # nobody there asked, possibly made by someone who is not even in the
+        # house, and in the telephone's case is on the other end of a call
+        # that would then hear itself twice.
+        if self._current_source in _ELSEWHERE:
             return
         voice = self.ctx.service("voice")
         if voice is not None and text.strip():

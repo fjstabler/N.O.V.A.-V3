@@ -30,7 +30,11 @@ CREATE TABLE IF NOT EXISTS transactions (
     currency      TEXT NOT NULL DEFAULT 'GBP',
     merchant      TEXT NOT NULL DEFAULT '',
     category      TEXT NOT NULL DEFAULT '',
-    source        TEXT NOT NULL       -- 'csv' | 'starling' | 'webhook'
+    source        TEXT NOT NULL,      -- 'csv' | 'starling' | 'webhook'
+    -- Set when the owner says a payment was not theirs. Recorded rather
+    -- than acted on: nothing here can freeze a card, and pretending
+    -- otherwise on a fraud call would be the worst possible moment for it.
+    disputed_at   TEXT
 );
 CREATE INDEX IF NOT EXISTS transactions_when ON transactions(happened_at);
 
@@ -172,6 +176,30 @@ class Ledger:
                     (_iso(since),),
                 ).fetchone()
                 return abs(float(row["total"]))
+
+        return await asyncio.to_thread(read)
+
+    async def dispute(self, transaction_id: str) -> None:
+        """Mark one transaction as not the owner's."""
+
+        def write() -> None:
+            with self._connect() as connection:
+                connection.execute(
+                    "UPDATE transactions SET disputed_at = ? WHERE id = ?",
+                    (_iso(_now()), transaction_id),
+                )
+
+        async with self._lock:
+            await asyncio.to_thread(write)
+
+    async def disputed(self) -> list[dict[str, object]]:
+        def read() -> list[dict[str, object]]:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    "SELECT * FROM transactions WHERE disputed_at IS NOT NULL"
+                    " ORDER BY disputed_at DESC"
+                ).fetchall()
+                return [dict(row) for row in rows]
 
         return await asyncio.to_thread(read)
 
