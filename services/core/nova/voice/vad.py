@@ -21,6 +21,14 @@ from ..runtime.logging import get_logger
 log = get_logger(__name__)
 
 FRAME_MS = 80
+
+#: What a quiet room sounds like, as RMS on a 0-1 scale. Where the energy
+#: gate's noise floor starts, so a capture that opens mid-sentence is heard.
+ASSUMED_QUIET = 0.002
+
+#: Nothing below this is speech however quiet the room is, which stops the gate
+#: from opening on the hiss of the microphone itself once the floor has decayed.
+SPEECH_MINIMUM = 0.008
 #: WebRTC only accepts 10/20/30 ms frames, so an 80 ms block is split into 20 ms slices.
 VAD_SLICE_MS = 20
 
@@ -123,17 +131,32 @@ class Endpointer:
         return slices > 0 and votes >= 2
 
     def _energy_speech(self, frame: bytes) -> bool:
-        """Adaptive noise gate used when webrtcvad is not installed."""
+        """Adaptive noise gate used when webrtcvad is not installed.
+
+        Which is most of the time in practice: webrtcvad is a C extension that
+        needs a compiler, so on a plain container it is simply absent and this
+        is the detector deciding whether N.O.V.A. hears anything at all.
+
+        The floor starts at an assumed quiet room rather than at the first
+        frame. Anchoring it to the first frame was catastrophic in the one case
+        that happens every time: a wake-word capture opens on the tail of "hey
+        Jarvis", so the first frame *is* speech, the floor was set to speech
+        level, and every later frame was then measured against three times that
+        and never passed. The endpointer waited out its full timeout and the
+        whole utterance was thrown away — at any volume, however clearly
+        somebody spoke.
+        """
         energy = _frame_energy(frame)
         if self._energy_floor is None:
-            self._energy_floor = energy
-            return False
-        # Track the noise floor upward slowly and downward quickly.
+            self._energy_floor = ASSUMED_QUIET
+        # Track the noise floor downward quickly and upward slowly: a room that
+        # goes quiet should be believed at once, while a room that is genuinely
+        # noisy has to stay noisy for a while before speech has to clear it.
         if energy < self._energy_floor:
             self._energy_floor = self._energy_floor * 0.9 + energy * 0.1
         else:
             self._energy_floor = self._energy_floor * 0.995 + energy * 0.005
-        return energy > max(self._energy_floor * 3.0, 0.008)
+        return energy > max(self._energy_floor * 3.0, SPEECH_MINIMUM)
 
     @property
     def speech_ms(self) -> int:
