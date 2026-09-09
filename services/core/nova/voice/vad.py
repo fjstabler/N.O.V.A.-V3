@@ -136,6 +136,16 @@ class Endpointer:
         return energy > max(self._energy_floor * 3.0, 0.008)
 
     @property
+    def speech_ms(self) -> int:
+        """How much of what was captured the detector called speech.
+
+        Exposed for diagnostics: "it listened and did nothing" has a completely
+        different cause when this is zero (nothing sounded like a voice) than
+        when it is under the threshold (something did, briefly).
+        """
+        return self._speech_ms
+
+    @property
     def had_speech(self) -> bool:
         # Under ~200 ms is a cough or a door, not an utterance.
         return self._speech_ms >= 200

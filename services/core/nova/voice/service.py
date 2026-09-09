@@ -411,11 +411,30 @@ class VoiceService(Service):
 
     async def _finish_capture(self) -> None:
         audio = bytes(self._buffer)
-        had_speech = self._endpointer is not None and self._endpointer.had_speech
+        endpointer = self._endpointer
+        had_speech = endpointer is not None and endpointer.had_speech
+        # Read defensively for the same reason `_note_frame_heard` is: a
+        # diagnostic must not be the thing that breaks the path it exists to
+        # explain, and the endpointer is swappable.
+        speech_ms = int(getattr(endpointer, "speech_ms", 0) or 0)
         self._reset_capture()
         self.bus.publish(Topics.LISTEN_ENDED, {"bytes": len(audio)}, source=self.name)
 
         if not had_speech or len(audio) < FRAME_SAMPLES * 4:
+            # Said out loud in the log, because from outside this is the exact
+            # shape of "it wakes up, listens, and then does nothing" — and it
+            # was the one path through here that reported nothing at all, which
+            # made it indistinguishable from a broken model, a rejected API key
+            # or a dead microphone. The numbers separate them: no bytes is
+            # audio never arriving, bytes with no speech_ms is audio arriving
+            # that the detector will not call speech.
+            self.log.info(
+                "capture_discarded",
+                reason="no speech detected" if not had_speech else "too short",
+                bytes=len(audio),
+                speech_ms=speech_ms,
+                peak=round(_peak(audio), 4),
+            )
             await self._return_to_idle()
             return
 
@@ -765,3 +784,20 @@ def _spoken(model_name: str) -> str:
     if stem.endswith(".onnx"):
         stem = stem[: -len(".onnx")]
     return stem.replace("_", " ").strip()
+
+
+def _peak(audio: bytes) -> float:
+    """Loudest sample in a capture, 0.0 to 1.0.
+
+    The number that separates "the microphone sent nothing" from "the
+    microphone sent silence" — which look identical from a log line saying only
+    how many bytes arrived.
+    """
+    if not audio:
+        return 0.0
+    try:
+        import numpy
+    except ImportError:  # pragma: no cover - numpy ships with the voice extra
+        return 0.0
+    samples = numpy.frombuffer(audio, dtype=numpy.int16)
+    return float(numpy.abs(samples).max()) / 32768.0 if samples.size else 0.0
