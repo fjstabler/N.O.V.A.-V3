@@ -25,10 +25,11 @@ const UNIT = Math.min(SCREEN.width, SCREEN.height);
 /**
  * The clock's box, in pixels.
  *
- * Measured in Chromium at 960×480 against the built bundle, where it lays out
- * as 210 × 80 centred on the screen. Rounded up to the `max-width: 220px` cap
- * in `interface.css` and a little more height, so the check is against
- * slightly more clock than actually appears rather than slightly less.
+ * Measured in Chromium at 960×480 against the built bundle by
+ * `scripts/panel-probe.mjs`, where it lays out as 201 × 78 centred on the
+ * screen. Rounded up here to the `max-width: 220px` cap in `interface.css`
+ * and a little more height, so the check is against slightly more clock than
+ * actually appears rather than slightly less.
  */
 const CLOCK = { halfWidth: 220 / 2, halfHeight: 84 / 2 };
 

@@ -178,10 +178,17 @@ export class FallbackRenderer {
     ctx.translate(centreX, centreY);
     ctx.globalCompositeOperation = 'lighter';
 
-    // Outer halo.
+    // Outer halo. Its inner edge starts at the hollow rather than at the
+    // centre: a radial gradient is brightest at its origin, so pushing only
+    // the outer edge outward left a glow sitting exactly where the clock goes.
     const haloRadius = hollow + unit * 0.5 * scale;
     const halo = ctx.createRadialGradient(0, 0, 0, 0, 0, haloRadius);
-    halo.addColorStop(0, css(accent, 0.16 + 0.12 * energy));
+    // Faded in across the hollow rather than started at it: everything inside
+    // a radial gradient's inner circle is painted its first stop, so giving
+    // the gradient an inner radius filled the hole solid instead of clearing
+    // it — a bright disc sitting exactly behind the digits.
+    halo.addColorStop(0, css(accent, 0));
+    halo.addColorStop(Math.min(hollow / haloRadius, 0.95), css(accent, 0.16 + 0.12 * energy));
     halo.addColorStop(1, css(accent, 0));
     ctx.fillStyle = halo;
     ctx.beginPath();

@@ -15,6 +15,9 @@
   --bg-void: #04060d;
   --bg-deep: #070b16;
 
+  /* Wide, geometric, and a sibling of the orbital rings. Used for the
+     clock's digits on a panel; illegible small, so nowhere else. */
+  --font-display: 'Orbitron', 'Inter', system-ui, sans-serif;
   --text-primary: rgba(233, 240, 255, 0.96);
   --text-secondary: rgba(190, 205, 232, 0.72);
   --text-tertiary: rgba(150, 170, 205, 0.5);

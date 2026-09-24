@@ -172,12 +172,22 @@ export function NovaCore(): JSX.Element {
       quality: appearance.animation_quality as QualityName,
       bloomIntensity: appearance.bloom_intensity,
       particleDensity: appearance.particle_density,
-      coreScale,
-      hollow,
-      minTilt,
       reduceMotion: appearance.reduce_motion,
     });
-  }, [appearance, coreScale, hollow, minTilt]);
+  }, [appearance]);
+
+  /**
+   * The panel geometry, pushed separately.
+   *
+   * It used to ride along with the appearance settings, which return early
+   * until the bridge has delivered them — so between load and the first
+   * settings message the Core drew with no hollow at all, putting its luminous
+   * centre directly behind the clock. Visible for a second on every start, and
+   * permanently on a panel that never connects.
+   */
+  useEffect(() => {
+    rendererRef.current?.updateOptions({ coreScale, hollow, minTilt });
+  }, [coreScale, hollow, minTilt]);
 
   // Keyed by backend so switching one mounts a new element. A canvas cannot
   // change context type, so reusing it across a switch guarantees a null

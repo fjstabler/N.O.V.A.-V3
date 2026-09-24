@@ -24,6 +24,35 @@ body,
   background: #04060d;
 }
 
+/*
+ * Shipped rather than assumed.
+ *
+ * The stack below has always named Inter first, and on a wall panel none of it
+ * resolved: LineageOS has no Inter, no SF Pro and no Segoe, so every fallback
+ * missed and the entire interface rendered in Roboto. The design was drawn for
+ * one font and the device was drawing another — which is why the clock looked
+ * like the stock Android one.
+ *
+ * Paths are relative to this stylesheet, so they work under the desktop build
+ * and under the core's /app prefix without either knowing about the other.
+ */
+@font-face {
+  font-family: 'Inter';
+  src: url('../fonts/inter.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* The clock's digits on a panel, and nothing else — see `--font-display`. */
+@font-face {
+  font-family: 'Orbitron';
+  src: url('../fonts/orbitron.woff2') format('woff2');
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 body {
   font-family:
     'Inter', 'SF Pro Display', 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system,
