@@ -87,6 +87,24 @@ export const PROFILES: Record<NovaState, CoreProfile> = {
 };
 
 /**
+ * Which profile the Core should be drawing, given the state and whether the
+ * fifteen-minute idle timer has fired.
+ *
+ * The settled look applies only while genuinely idle. The timer runs on
+ * wall-clock time and knows nothing about what the assistant is doing, so it
+ * can fire in the middle of a turn — and dimming then would be exactly
+ * backwards: the Core is at its most active precisely when somebody has been
+ * waiting a quarter of an hour for a long answer.
+ *
+ * Lifted out of the two renderers, which each had this expression written
+ * inline and identically. One copy can be tested; two are a coin flip on
+ * whether they stay the same.
+ */
+export function profileFor(state: NovaState, idleDimmed: boolean): CoreProfile {
+  return state === 'idle' && idleDimmed ? IDLE_DIMMED : (PROFILES[state] ?? PROFILES.idle);
+}
+
+/**
  * A critically damped spring.
  *
  * Chosen over an easing curve because it is interruptible: a state change

@@ -37,7 +37,7 @@ import {
   SCENE_FRAGMENT,
 } from './shaders';
 import { FpsMeter, FrameWatchdog, lowerTier, tierFor, type QualityName, type QualityTier } from './quality';
-import { CoreMotion, IDLE_DIMMED, PALETTES, PROFILES, RINGS, paletteFor, type Palette } from './visual';
+import { CoreMotion, PALETTES, PROFILES, RINGS, paletteFor, profileFor, type Palette } from './visual';
 
 export interface CoreRendererOptions {
   quality: QualityName;
@@ -335,8 +335,7 @@ export class CoreRenderer {
     this.lastFrame = now;
     const dt = Math.min(frameMs / 1000, 1 / 15);
 
-    const profile =
-      this.state === 'idle' && this.idleDimmed ? IDLE_DIMMED : (PROFILES[this.state] ?? PROFILES.idle);
+    const profile = profileFor(this.state, this.idleDimmed);
     this.motion.step(profile, this.level, dt);
 
     // Reduced motion slows the clock rather than freezing it: the spec asks for

@@ -177,5 +177,173 @@ const shot = await cdp.send('Page.captureScreenshot', { format: 'png', fromSurfa
 await (await import('node:fs/promises')).writeFile(
   'panel.png', Buffer.from(shot.data, 'base64'));
 console.log('wrote panel.png');
+
+// ------------------------------------------------------- the idle settle
+//
+// After fifteen minutes with nobody talking to it the Core drops to its
+// IDLE_DIMMED profile: quieter, slower, and — the part that matters here —
+// scaled to 0.88. The rings move *inward* at that scale, toward the clock, so
+// "it clears the clock" has to hold settled as well as awake.
+//
+// Rather than wait a quarter of an hour, any timer longer than a minute is
+// shortened before the page loads. Not to milliseconds: the awake sample has
+// to happen before it fires, or both readings are of the same state and the
+// comparison says nothing. That is exactly what the first version of this did.
+const SETTLE_AFTER_MS = 4000;
+
+const settled = await browser.newPage({ viewport: { width: 960, height: 480 }, deviceScaleFactor: 1 });
+await settled.addInitScript((after) => {
+  localStorage.setItem('nova.bridge.token', 'x');
+  const real = window.setTimeout.bind(window);
+  window.setTimeout = ((fn, ms, ...rest) => real(fn, ms >= 60_000 ? after : ms, ...rest));
+}, SETTLE_AFTER_MS);
+await settled.goto('http://127.0.0.1:4173/app/', { waitUntil: 'domcontentloaded' });
+await settled.evaluate(() => document.fonts.ready);
+
+/** Whole-screen light, to tell an awake Core from a settled one. */
+const brightness = () =>
+  settled.evaluate(() => {
+    const canvas = document.querySelector('canvas.nova-core');
+    const { data } = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+    let lit = 0;
+    let total = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const v = Math.max(data[i], data[i + 1], data[i + 2]);
+      total += v;
+      if (v > 60) lit += 1;
+    }
+    return { lit, mean: +(total / (data.length / 4)).toFixed(1) };
+  });
+
+/**
+ * The brightest thing the Core puts under the clock, across many frames.
+ *
+ * One frame is not enough: the rings turn, and a dashed one has bright
+ * segments that sweep past. The worst frame is the one that matters.
+ *
+ * The threshold is taken from the picture rather than written down. A fixed
+ * number cannot tell "a ring is crossing the digits" from "the digits sit on a
+ * soft halo", because the halo is additive and its middle is genuinely lit —
+ * that is the design. So each frame is measured against the brightest pixel
+ * anywhere on the canvas, which is always on a ring: anything under the clock
+ * at 60% of that is a ring line, and the `spread` of what merely clears a low
+ * fixed threshold says which of the two it is. A ring crossing lights a thin
+ * band; a halo lights the whole box evenly.
+ */
+const RING_FRACTION = 0.6;
+const GLOW_FLOOR = 90;
+
+const underClock = (frames) =>
+  settled.evaluate(async ({ count, ringFraction, glowFloor }) => {
+    const clock = document.querySelector('.clock');
+    const canvas = document.querySelector('canvas.nova-core');
+    const box = clock.getBoundingClientRect();
+    clock.style.visibility = 'hidden';
+    const sx = canvas.width / canvas.clientWidth;
+    const sy = canvas.height / canvas.clientHeight;
+    const rect = [Math.round(box.left * sx), Math.round(box.top * sy),
+                  Math.round(box.width * sx), Math.round(box.height * sy)];
+    const ctx = canvas.getContext('2d');
+
+    let peakUnder = 0;
+    let peakAnywhere = 0;
+    let worstRingPixels = 0;
+    let worstGlow = 0;
+    let spread = null;
+    for (let f = 0; f < count; f += 1) {
+      await new Promise((r) => requestAnimationFrame(() => r()));
+
+      // The reference: the brightest pixel the Core draws this frame. It is on
+      // a ring, so it is what a ring line looks like right now.
+      const whole = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let framePeak = 0;
+      for (let i = 0; i < whole.length; i += 4) {
+        const v = Math.max(whole[i], whole[i + 1], whole[i + 2]);
+        if (v > framePeak) framePeak = v;
+      }
+      peakAnywhere = Math.max(peakAnywhere, framePeak);
+
+      const { data } = ctx.getImageData(...rect);
+      const ringLine = framePeak * ringFraction;
+      let ring = 0;
+      let glow = 0;
+      const hit = { l: 1e9, t: 1e9, r: -1, b: -1 };
+      for (let i = 0; i < data.length; i += 4) {
+        const v = Math.max(data[i], data[i + 1], data[i + 2]);
+        if (v > peakUnder) peakUnder = v;
+        if (v >= ringLine) ring += 1;
+        if (v > glowFloor) {
+          glow += 1;
+          const px = (i / 4) % rect[2];
+          const py = Math.floor(i / 4 / rect[2]);
+          hit.l = Math.min(hit.l, px); hit.r = Math.max(hit.r, px);
+          hit.t = Math.min(hit.t, py); hit.b = Math.max(hit.b, py);
+        }
+      }
+      worstRingPixels = Math.max(worstRingPixels, ring);
+      if (glow > worstGlow) {
+        worstGlow = glow;
+        spread = glow ? { ...hit, of: `${rect[2]}x${rect[3]}` } : null;
+      }
+    }
+    clock.style.visibility = '';
+    return {
+      peakUnder,
+      peakAnywhere,
+      ringPixels: worstRingPixels,
+      glowPixels: worstGlow,
+      spread,
+      frames: count,
+    };
+  }, { count: frames, ringFraction: RING_FRACTION, glowFloor: GLOW_FLOOR });
+
+await settled.waitForTimeout(1800);
+const awake = await brightness();
+const awakeUnder = await underClock(90);
+
+await settled.waitForTimeout(SETTLE_AFTER_MS + 5000);
+const quiet = await brightness();
+const quietUnder = await underClock(90);
+
+const observedState = await settled.evaluate(() => document.documentElement.dataset.state);
+
+const report = (label, whole, under) => {
+  const area = under.spread ? (under.spread.r - under.spread.l + 1) * (under.spread.b - under.spread.t + 1) : 0;
+  console.log(`  ${label.padEnd(9)}`, JSON.stringify(whole));
+  console.log(
+    `    under the clock: peak ${under.peakUnder} against a ring at ${under.peakAnywhere}; ` +
+      `${under.ringPixels} ring-bright pixel(s) over ${under.frames} frames`,
+  );
+  console.log(
+    `    the ${under.glowPixels} pixel(s) over ${GLOW_FLOOR} cover ${JSON.stringify(under.spread)} ` +
+      `— ${area ? Math.round((under.glowPixels / area) * 100) : 0}% of that box filled, ` +
+      `${under.ringPixels === 0 ? 'a halo, not a line' : 'A LINE'}`,
+  );
+};
+
+console.log('\nIDLE SETTLE');
+report('awake', awake, awakeUnder);
+report('settled', quiet, quietUnder);
+// What is actually behind the clock, to look at rather than to total up.
+await settled.evaluate(() => { document.querySelector('.clock').style.visibility = 'hidden'; });
+await settled.waitForTimeout(200);
+const cdp2 = await settled.context().newCDPSession(settled);
+const bare = await cdp2.send('Page.captureScreenshot', { format: 'png', fromSurface: false });
+await (await import('node:fs/promises')).writeFile('panel-no-clock.png', Buffer.from(bare.data, 'base64'));
+console.log('  wrote panel-no-clock.png');
+console.log('  assistant state:', observedState);
+if (observedState !== 'idle') {
+  // Not a failure, and worth saying out loud rather than reporting a dim that
+  // never happened. The settled profile is chosen only while the assistant is
+  // `idle`, and a page with no core to talk to never leaves `booting` — so the
+  // end of this chain cannot be reached here. The selection itself is covered
+  // by `src/core/idle-settle.test.ts`; what this run does show is that the
+  // clock stays clear whatever the Core is doing.
+  console.log('  (no core to connect to, so it stays in', observedState + ' —');
+  console.log('   the dim only applies while idle. See src/core/idle-settle.test.ts.)');
+} else {
+  console.log('  it settles:', quiet.lit < awake.lit * 0.9 ? 'YES' : 'NO');
+}
+await settled.close();
 await browser.close();
 server.close();

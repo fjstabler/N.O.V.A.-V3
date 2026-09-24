@@ -12,7 +12,7 @@
  */
 
 import type { NovaState } from '@protocol';
-import { CoreMotion, IDLE_DIMMED, PROFILES, RINGS, paletteFor, type Palette } from './visual';
+import { CoreMotion, PROFILES, RINGS, paletteFor, profileFor, type Palette } from './visual';
 import { FpsMeter } from './quality';
 
 export interface FallbackOptions {
@@ -134,8 +134,7 @@ export class FallbackRenderer {
     const dt = Math.min((now - this.lastFrame) / 1000, 1 / 15);
     this.lastFrame = now;
 
-    const profile =
-      this.state === 'idle' && this.idleDimmed ? IDLE_DIMMED : (PROFILES[this.state] ?? PROFILES.idle);
+    const profile = profileFor(this.state, this.idleDimmed);
     this.motion.step(profile, this.level, dt);
 
     // See CoreRenderer's frame() for why this is scaled the same way: the
