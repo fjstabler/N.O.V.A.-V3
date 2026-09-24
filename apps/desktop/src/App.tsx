@@ -1,0 +1,174 @@
+/**
+ * The root.
+ *
+ * When idle, this renders exactly two things: the clock and the Core. Everything
+ * else — settings, notifications, the console — is summoned and then returns
+ * whence it came. That restraint is the design, not an unfinished state.
+ */
+
+import { useEffect, useRef, useState } from 'react';
+import { Requests } from '@protocol';
+import { Clock } from '@/components/Clock';
+import { Conversation } from '@/components/Conversation';
+import { Notifications } from '@/components/Notifications';
+import { NovaCore } from '@/components/NovaCore';
+import { Pairing } from '@/components/Pairing';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { SettingsPanel } from '@/components/SettingsPanel';
+import { ConnectionStatus, DeveloperReadout } from '@/components/StatusOverlay';
+import { Surface } from '@/components/Surface';
+import { TextConsole } from '@/components/TextConsole';
+import { RemoteAudio } from '@/components/RemoteAudio';
+import { BridgeClient, createDescriptorResolver } from '@/lib/bridge';
+import { claimTokenFromUrl, clearToken, isBrowser, storedToken } from '@/lib/session';
+import { useNova, wireBridge } from '@/state/store';
+
+export function App(): JSX.Element {
+  const [client, setClient] = useState<BridgeClient | null>(null);
+  const clientRef = useRef<BridgeClient | null>(null);
+  const theme = useNova((store) => store.settings?.appearance?.theme ?? 'nova-blue');
+  const state = useNova((store) => store.state);
+  // Only ever true in a browser: the shell is handed a token over IPC.
+  const [needsPairing, setNeedsPairing] = useState(() => {
+    if (!isBrowser()) return false;
+    claimTokenFromUrl();
+    return !storedToken();
+  });
+
+  // One bridge for the lifetime of the window.
+  useEffect(() => {
+    const bridge = new BridgeClient(createDescriptorResolver());
+    clientRef.current = bridge;
+    const unwire = wireBridge(bridge);
+    void bridge.connect();
+    setClient(bridge);
+
+    // Electron tells us the moment the core is listening, which is faster than
+    // waiting for the next reconnect backoff to expire.
+    const offBridgeReady = window.nova?.onBridgeReady(() => void bridge.connect());
+    const offCoreExited = window.nova?.onCoreExited(() => void bridge.connect());
+
+    // A stored token the core no longer accepts is unrecoverable by retrying,
+    // and retrying it looks exactly like the core being down. Ask again.
+    const offRejected = bridge.onUnauthorised(() => {
+      if (!isBrowser()) return;
+      clearToken();
+      setNeedsPairing(true);
+    });
+
+    return () => {
+      offBridgeReady?.();
+      offCoreExited?.();
+      offRejected();
+      unwire();
+      bridge.close();
+      clientRef.current = null;
+    };
+  }, []);
+
+  // Global shortcuts relayed from the main process, plus their in-window twins
+  // so the app behaves the same when run in a browser during development.
+  useEffect(() => {
+    const store = useNova.getState;
+
+    const activateVoice = () => {
+      clientRef.current?.request(Requests.VoiceActivate).catch(() => undefined);
+    };
+    const toggleSettings = () => store().toggleSettings();
+    const toggleConsole = () => store().toggleConsole();
+
+    const offVoice = window.nova?.onActivateVoice(activateVoice);
+    const offSettings = window.nova?.onToggleSettings(toggleSettings);
+    const offConsole = window.nova?.onToggleConsole(toggleConsole);
+
+    const onKey = (event: KeyboardEvent) => {
+      const modifier = event.ctrlKey || event.metaKey;
+      const typing =
+        event.target instanceof HTMLElement &&
+        ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName);
+
+      // F1 is the primary way in: a single key, and one that desktop
+      // environments almost never claim. Ctrl+, is kept because it is the
+      // convention, but it is no longer the only route.
+      if (event.key === 'F1' || (modifier && event.key === ',')) {
+        event.preventDefault();
+        toggleSettings();
+      } else if (event.key === 'F2' || (modifier && event.shiftKey && event.key.toLowerCase() === 'k')) {
+        event.preventDefault();
+        toggleConsole();
+      } else if (modifier && event.shiftKey && event.code === 'Space') {
+        event.preventDefault();
+        activateVoice();
+      } else if (event.key === 'Escape' && !typing) {
+        // Escape always means "stop what you are doing" — but not while the
+        // user is mid-sentence in the console, where it closes the console.
+        clientRef.current?.request(Requests.VoiceCancel).catch(() => undefined);
+      }
+    };
+
+    window.addEventListener('keydown', onKey);
+    return () => {
+      offVoice?.();
+      offSettings?.();
+      offConsole?.();
+      window.removeEventListener('keydown', onKey);
+    };
+  }, []);
+
+  // The theme is a data attribute so CSS custom properties can cascade from it,
+  // keeping colour in one place rather than threaded through components.
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+
+  useEffect(() => {
+    document.documentElement.dataset.state = state;
+  }, [state]);
+
+  if (needsPairing) {
+    return (
+      <Pairing
+        onPaired={() => {
+          setNeedsPairing(false);
+          void clientRef.current?.connect();
+        }}
+      />
+    );
+  }
+
+  return (
+    <main className="stage">
+      <NovaCore />
+
+      <div className="stage__content">
+        <Clock />
+        <Conversation />
+      </div>
+
+      <Notifications client={client} />
+      <Surface client={client} />
+      <ErrorBoundary label="Settings could not open">
+        <SettingsPanel client={client} />
+      </ErrorBoundary>
+      <TextConsole client={client} />
+      <RemoteAudio client={client} />
+
+      <ConnectionStatus />
+      <DeveloperReadout />
+
+      {/* The only affordance on the idle screen, and it stays nearly invisible
+          until the pointer finds it. */}
+      <button
+        type="button"
+        className="settings-trigger"
+        onClick={() => useNova.getState().toggleSettings()}
+        aria-label="Settings"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 008 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H2a2 2 0 110-4h.09A1.65 1.65 0 004.6 8a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 3.6 1.65 1.65 0 0010 2.09V2a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H22a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z" />
+        </svg>
+      </button>
+    </main>
+  );
+}

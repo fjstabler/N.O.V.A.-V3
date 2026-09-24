@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The core serves plain HTTP on a private network — a LAN address or a
+  Tailscale one — and has no certificate to present. Android blocks cleartext
+  by default since API 28, which would leave the panel with a blank screen and
+  a log line most people never see.
+
+  This is a deliberate, bounded exception: the transport is gated on a bearer
+  token, and the network boundary is the LAN or the tailnet, exactly as it is
+  for the desktop shell over loopback. If the core is ever put behind TLS,
+  delete this file and the app keeps working over https/wss unchanged.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -1,0 +1,259 @@
+"""SecurityService: room-watch.
+
+Armed and disarmed by voice, never left running by default (see
+`config.schema.SecuritySettings` for why). While armed, samples the
+configured camera on an interval, and for anyone whose face does not match
+an enrolled one, for `confirm_frames` consecutive samples in a row: speaks a
+warning immediately, raises a notification, and pushes to the phone via
+ntfy — each independent of the others, so one channel failing (no ntfy
+topic set, no voice service, notifications disabled) does not take the
+others down with it.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import secrets
+import time
+from typing import Any
+
+from ..context import NovaContext
+from ..integrations.local_camera import local_camera_pool
+from ..integrations.ntfy import send_ntfy
+from ..notifications import Level, Notification
+from ..runtime import Service, Topics
+from ..runtime.errors import MissingDependency, MissingModel, SkillError
+from .faces import FaceEngine, FaceStore
+
+
+class SecurityService(Service):
+    """Owns the watch loop, the enrolled-faces store and the alert pipeline."""
+
+    name = "security"
+
+    def __init__(self, ctx: NovaContext) -> None:
+        super().__init__(ctx)
+        self.faces = FaceStore(ctx.paths.data_dir / "faces.json")
+        self.engine = FaceEngine(ctx.paths.models_dir)
+        self.armed = False
+        self._watch_task: asyncio.Task[None] | None = None
+        # -inf, not 0.0: time.monotonic() counts from an arbitrary reference
+        # point (often boot time), not the epoch. On a machine freshly up for
+        # less than alert_cooldown_seconds, `now - 0.0` looks smaller than the
+        # cooldown and the very first real alert gets silently swallowed as
+        # "still cooling down" — -inf makes the first check always pass
+        # regardless of what the clock's absolute value happens to be.
+        self._last_alert_at = float("-inf")
+        self._consecutive_unknown = 0
+        #: Monotonic time an *enrolled* face was last seen while watching, read by
+        #: PresenceService so an armed watch doubles as a free presence signal.
+        self.last_known_face_at: float | None = None
+
+    async def on_stop(self) -> None:
+        await self.disarm()
+
+    def describe(self) -> str:
+        if self.armed:
+            return f"watching ({self.ctx.settings.security.camera_name or 'no camera'})"
+        return f"stood down, {len(self.faces.names())} face(s) enrolled"
+
+    # -------------------------------------------------------------- control
+
+    async def arm(self) -> str:
+        settings = self.ctx.settings.security
+        camera = self.resolve_camera()
+        if camera is None:
+            name = settings.camera_name or "(none set)"
+            raise SkillError(
+                f"'{name}' isn't a configured camera — set Security → Camera in settings first."
+            )
+        if not self.faces.names():
+            raise SkillError(
+                "no face is enrolled yet — say 'this is my face' while looking at the camera first."
+            )
+        if not self.engine.loaded:
+            try:
+                await asyncio.to_thread(self.engine.load)
+            except (MissingDependency, MissingModel) as exc:
+                raise SkillError(str(exc)) from exc
+        if self.armed:
+            return "Already watching."
+
+        # Generated here rather than waiting for the first alert, so the
+        # topic exists — and is visible in Settings — the moment room-watch
+        # is armed for the first time, giving a chance to subscribe on ntfy
+        # before anything actually happens, not only after.
+        self._ensure_topic()
+
+        self.armed = True
+        self._consecutive_unknown = 0
+        self._watch_task = self.spawn(self._watch_loop(camera.index), name="security-watch")
+        self.log.info("security_armed", camera=camera.name)
+        return "Watching now."
+
+    async def disarm(self) -> str:
+        if not self.armed:
+            return "Already stood down."
+        self.armed = False
+        if self._watch_task is not None:
+            self._watch_task.cancel()
+            self._watch_task = None
+        self.log.info("security_disarmed")
+        return "Stood down."
+
+    def resolve_camera(self) -> Any:
+        name = self.ctx.settings.security.camera_name
+        for camera in self.ctx.settings.vision.named_cameras:
+            if camera.name == name:
+                return camera
+        return None
+
+    # ---------------------------------------------------------------- watch
+
+    async def _watch_loop(self, index: int) -> None:
+        try:
+            while self.armed:
+                await self._check_once(index)
+                await asyncio.sleep(self.ctx.settings.security.poll_interval_seconds)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # A security feature that stops protecting without saying so is
+            # worse than one that never started — the person who armed it
+            # has no reason to think anything changed. Told the same way a
+            # real alert is: spoken and notified, independently of each other.
+            self.log.exception("security_watch_failed")
+            self.armed = False
+            await self._announce_watch_stopped()
+
+    async def _check_once(self, index: int) -> None:
+        try:
+            frame = await local_camera_pool.read_bgr(index)
+        except Exception as exc:  # noqa: BLE001 - a camera glitch must not stop the watch loop
+            self.log.warning("security_frame_failed", error=str(exc))
+            return
+
+        try:
+            observations = await asyncio.to_thread(self.engine.observe, frame)
+        except Exception as exc:  # noqa: BLE001 - a detection glitch must not stop the watch loop
+            self.log.warning("security_detect_failed", error=str(exc))
+            return
+        if not observations:
+            self._consecutive_unknown = 0
+            return
+
+        settings = self.ctx.settings.security
+        # Match every face once, then read both signals off the result: an
+        # enrolled face refreshes the presence timestamp, an unenrolled one arms
+        # the alert path below.
+        matches = [
+            self.faces.match(obs.embedding, threshold=settings.match_threshold)
+            for obs in observations
+        ]
+        if any(match is not None for match in matches):
+            self.last_known_face_at = time.monotonic()
+        unknown_present = any(match is None for match in matches)
+        if not unknown_present:
+            self._consecutive_unknown = 0
+            return
+
+        self._consecutive_unknown += 1
+        if self._consecutive_unknown < settings.confirm_frames:
+            return
+
+        now = time.monotonic()
+        if now - self._last_alert_at < settings.alert_cooldown_seconds:
+            return
+        self._last_alert_at = now
+        self._consecutive_unknown = 0
+        await self._raise_alert()
+
+    # --------------------------------------------------------------- alert
+
+    async def _raise_alert(self) -> None:
+        settings = self.ctx.settings.security
+        self.log.warning("security_alert_raised")
+
+        # Spoken immediately and unconditionally — a security warning must not
+        # wait behind NotificationService's busy/quiet-hours/defer handling,
+        # the way an ordinary notification correctly does. Looked up by name
+        # only (no isinstance check), the same as orchestrator.py's own
+        # `_synthesise` does, and for the same reason: a test double for
+        # either service is not a VoiceService/NotificationService subclass.
+        voice = self.ctx.service("voice")
+        if voice is not None:
+            await voice.speak(settings.alert_message)
+
+        # A visual record too, but not critical-level and not set to speak —
+        # this alert has already been spoken above; a second, independent
+        # speak trigger here would double it up.
+        notifications = self.ctx.service("notifications")
+        notification = Notification(
+            title="Room-watch",
+            body=settings.alert_message,
+            level=Level.WARNING,
+            icon="alert",
+            source=self.name,
+            timeout=0,
+        )
+        if notifications is not None:
+            await notifications.raise_notification(notification)
+        else:
+            self.bus.publish(Topics.NOTIFICATION, notification.as_payload(), source=self.name)
+
+        topic = self._ensure_topic()
+        camera = self.resolve_camera()
+        await send_ntfy(
+            settings.ntfy_server,
+            topic,
+            title="N.O.V.A. room-watch",
+            message=settings.alert_message,
+            click_url=self._mobile_camera_url(camera) if camera is not None else "",
+        )
+
+    async def _announce_watch_stopped(self) -> None:
+        voice = self.ctx.service("voice")
+        if voice is not None:
+            await voice.speak(
+                "Room-watch has stopped because of an error. Say 'watch my room' to start it again."
+            )
+
+        notifications = self.ctx.service("notifications")
+        notification = Notification(
+            title="Room-watch stopped",
+            body="An error stopped room-watch. Say 'watch my room' to restart it.",
+            level=Level.WARNING,
+            icon="alert",
+            source=self.name,
+            timeout=0,
+        )
+        if notifications is not None:
+            await notifications.raise_notification(notification)
+        else:
+            self.bus.publish(Topics.NOTIFICATION, notification.as_payload(), source=self.name)
+
+    def _ensure_topic(self) -> str:
+        settings = self.ctx.settings.security
+        if settings.ntfy_topic:
+            return settings.ntfy_topic
+        # A topic on ntfy.sh is a public channel by name — long and random is
+        # what keeps it effectively private, the same role a token plays
+        # elsewhere in this app.
+        topic = f"nova-room-{secrets.token_urlsafe(12)}"
+        self.ctx.store.patch({"security": {"ntfy_topic": topic}})
+        return topic
+
+    def _mobile_camera_url(self, camera: Any) -> str:
+        """A link to the mobile app so the alert can be tapped through to.
+
+        Deliberately does NOT embed `transport.token` — that's the same
+        full-privilege secret that gates the entire bridge (every skill tool,
+        settings, camera access), and this URL is handed to a third-party push
+        relay (ntfy.sh by default), not delivered directly to the user. A
+        paired device already holds its own copy of the token in its own
+        local storage; this just points it at the app, where it can use that.
+        """
+        base = self.ctx.settings.transport.public_url.rstrip("/")
+        if not base or camera is None:
+            return ""
+        return f"{base}/"

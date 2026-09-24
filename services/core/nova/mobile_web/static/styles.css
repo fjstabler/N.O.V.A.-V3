@@ -1,0 +1,287 @@
+:root {
+  --bg: #05070d;
+  --panel: #0c0f18;
+  --line: rgba(255, 255, 255, 0.08);
+  --text: #eaf2fb;
+  --text-dim: rgba(234, 242, 251, 0.55);
+  --accent: #4fb8ff;
+  --accent-dim: rgba(79, 184, 255, 0.18);
+  --danger: #ff6b6b;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.9rem 1.1rem 0.7rem;
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: background 0.3s ease;
+}
+.dot.is-connected { background: #58e08a; }
+.dot.is-error { background: var(--danger); }
+
+.pairing {
+  margin: auto 1.25rem;
+  padding: 1.5rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+}
+.pairing h1 { font-size: 1.1rem; margin: 0 0 0.4rem; }
+.pairing p { color: var(--text-dim); font-size: 0.85rem; margin: 0 0 1rem; line-height: 1.4; }
+.pairing input {
+  width: 100%;
+  padding: 0.8rem 0.9rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #05070d;
+  color: var(--text);
+  font-size: 0.95rem;
+  margin-bottom: 0.75rem;
+}
+.pairing button {
+  width: 100%;
+  padding: 0.8rem;
+  border-radius: 10px;
+  border: none;
+  background: var(--accent);
+  color: #04101c;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+  padding: 0.5rem 1.5rem;
+  cursor: pointer;
+  /* Holding the Core must never trigger iOS's selection/callout menu — a
+     canvas is treated like an image for that menu unless told otherwise. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#core {
+  width: min(68vw, 62vh, 340px);
+  height: min(68vw, 62vh, 340px);
+  display: block;
+  touch-action: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  pointer-events: none; /* the stage, not the canvas, owns the gesture */
+}
+
+.stage__caption {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+  transition: color 0.2s ease;
+}
+.stage.is-recording .stage__caption { color: var(--text); }
+.stage.is-busy { pointer-events: none; }
+
+.stage__line {
+  margin: 0;
+  max-width: 30rem;
+  min-height: 1.3em;
+  text-align: center;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  color: var(--text);
+}
+.stage__line.error { color: #ffb3b3; }
+
+.conversation {
+  flex-shrink: 0;
+  max-height: 22vh;
+  overflow-y: auto;
+  padding: 0.5rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+.turn {
+  max-width: 86%;
+  padding: 0.55rem 0.8rem;
+  border-radius: 14px;
+  font-size: 0.85rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0.7;
+}
+.turn.user {
+  align-self: flex-end;
+  background: var(--accent-dim);
+  border: 1px solid rgba(79, 184, 255, 0.3);
+  border-bottom-right-radius: 4px;
+}
+.turn.nova {
+  align-self: flex-start;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-bottom-left-radius: 4px;
+}
+.turn.error {
+  align-self: flex-start;
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid rgba(255, 107, 107, 0.35);
+  color: #ffb3b3;
+}
+.turn.pending { color: var(--text-dim); font-style: italic; }
+
+.controls {
+  flex-shrink: 0;
+  padding: 0.6rem 1.1rem calc(0.8rem + env(safe-area-inset-bottom) * 0);
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.text-form {
+  display: flex;
+  gap: 0.5rem;
+}
+.text-form input {
+  flex: 1;
+  padding: 0.7rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.95rem;
+}
+.text-form button {
+  width: 44px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--accent);
+  font-size: 1.1rem;
+}
+
+.camera-view {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+/* `.camera-view` and the browser's own `[hidden] { display: none }` rule
+   have equal specificity, and author styles win ties over the user-agent
+   stylesheet — so setting the `hidden` attribute alone silently did not
+   hide this element; `display: flex` above kept winning. Closing the view
+   (the X, the "Back to N.O.V.A." button, or a failed-load timeout) updated
+   the DOM correctly but never had any visible effect. */
+.camera-view[hidden] {
+  display: none;
+}
+.camera-view__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 1.1rem;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.camera-view__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.camera-view__close {
+  /* 44px is Apple's and Google's own documented minimum tappable size —
+     the previous 36px was under that, which reads as "the X doesn't
+     work" when it is actually just being missed by a few pixels. */
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 1.1rem;
+}
+.camera-view__image {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  object-fit: contain;
+  background: #000;
+}
+.camera-view__error {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.2rem;
+  padding: 2rem;
+  text-align: center;
+}
+.camera-view__error p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.camera-view__back {
+  padding: 0.8rem 1.4rem;
+  min-height: 44px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--accent);
+  color: #05131f;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+

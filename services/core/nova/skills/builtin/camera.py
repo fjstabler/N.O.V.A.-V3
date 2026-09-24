@@ -1,0 +1,150 @@
+"""On-device camera detection: people, motion and faces, without the cloud.
+
+Where the vision skill *describes* a camera by sending a frame to a cloud model,
+this *detects* on the machine itself — instantly, privately, with no key needed:
+
+* **people** — a local YOLO model finds whole people at any angle, the reliable
+  answer to "is anyone here" (no face to catch, no identity read or stored);
+* **motion** — two frames a moment apart, differenced in NumPy: "is anything
+  moving in here?";
+* **faces** — the same local YuNet detector room-watch uses, to count who is in
+  view and name anyone enrolled (only when you want identity).
+
+Each degrades cleanly: motion needs only NumPy; person detection needs the
+`person` extra; the face count borrows the security engine — and any that is
+missing says so plainly rather than failing.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Annotated
+
+from ...integrations.detection import MotionDetector, looks_blank
+from ...integrations.local_camera import local_camera_pool
+from ...integrations.person_detect import PersonDetector, describe_people
+from ...runtime.errors import MissingDependency, MissingModel, SkillError
+from ..base import Param, Skill, tool
+
+#: Shown when the camera returns a black frame — the single most common cause of
+#: every camera feature silently failing, and the fix (find the right index).
+_BLANK_CAMERA = (
+    "Camera {index} only gave me a black image, so I can't tell — it's very likely the wrong "
+    "camera. Run `python scripts/probe_cameras.py` to find which index has a live picture, then "
+    "set it in Vision → Camera index."
+)
+
+
+class CameraSkill(Skill):
+    name = "camera"
+    description = "Detect people, motion and faces on a local camera, entirely on-device."
+    category = "Vision"
+
+    def is_available(self) -> tuple[bool, str]:
+        if not self.ctx.settings.vision.camera_enabled:
+            return False, "the camera is disabled in settings"
+        return True, ""
+
+    async def setup(self) -> None:
+        # Built once so the YOLO weights load and cache on first use, not per call.
+        self._person_detector = PersonDetector()
+
+    def _camera_index(self, requested: int) -> int:
+        return requested if requested >= 0 else self.ctx.settings.vision.camera_index
+
+    @tool(
+        "Look at a camera and say whether anyone is there — reliable on-device person "
+        "detection that sees whole people at any angle. No face recognition, nothing "
+        "uploaded. Use for 'is anyone in the room', 'is someone here', 'is my room empty'."
+    )
+    async def look_for_people(
+        self,
+        camera_index: Annotated[int, Param("Which camera; -1 uses the default")] = -1,
+    ) -> str:
+        self._person_detector.confidence = self.ctx.settings.vision.person_confidence
+        index = self._camera_index(camera_index)
+        frame = await local_camera_pool.read_bgr(index)
+        if await asyncio.to_thread(looks_blank, frame):
+            raise SkillError(_BLANK_CAMERA.format(index=index))
+        try:
+            confidences = await asyncio.to_thread(self._person_detector.detect, frame)
+        except (MissingDependency, MissingModel) as exc:
+            raise SkillError(str(exc)) from exc
+        return describe_people(confidences)
+
+    @tool(
+        "Check a camera for movement right now — two quick frames compared "
+        "on-device. Use for 'is anything moving', 'is the room still', 'did "
+        "something just move in the kitchen'. No image leaves the machine."
+    )
+    async def check_for_motion(
+        self,
+        camera_index: Annotated[int, Param("Which camera; -1 uses the default")] = -1,
+        seconds: Annotated[float, Param("Gap between the two frames, in seconds")] = 1.0,
+    ) -> str:
+        index = self._camera_index(camera_index)
+        seconds = max(0.2, min(seconds, 5.0))
+        first = await local_camera_pool.read_bgr(index)
+        # Read continuously across the window rather than read → sleep → read.
+        # A webcam keeps buffering while we sleep, so the next read after a pause
+        # returns a stale frame from nearly the same instant as the first, and
+        # real movement is missed. Reading every frame keeps the buffer drained,
+        # so `second` is genuinely ~`seconds` later than `first`.
+        frames = max(2, min(int(seconds * 30), 150))
+        second = first
+        for _ in range(frames):
+            second = await local_camera_pool.read_bgr(index)
+        sensitivity = self.ctx.settings.vision.motion_sensitivity
+
+        def analyse() -> str | None:
+            # A black-in/black-out pair means the camera, not the room, is the
+            # problem — don't report it as "no movement".
+            if looks_blank(first) and looks_blank(second):
+                return None
+            return MotionDetector(min_area_fraction=sensitivity).detect(first, second).describe()
+
+        outcome = await asyncio.to_thread(analyse)
+        if outcome is None:
+            raise SkillError(_BLANK_CAMERA.format(index=index))
+        return outcome
+
+    @tool(
+        "Count the people visible on a camera and name any it recognises — the "
+        "same on-device face detection room-watch uses. Use for 'is anyone in "
+        "the office', 'how many people are here', 'who's in the room'."
+    )
+    async def count_people(
+        self,
+        camera_index: Annotated[int, Param("Which camera; -1 uses the default")] = -1,
+    ) -> str:
+        security = self.ctx.service("security")
+        if security is None:
+            raise SkillError("on-device face detection needs the security service running")
+        engine, faces = security.engine, security.faces
+        if not engine.loaded:
+            try:
+                await asyncio.to_thread(engine.load)
+            except (MissingDependency, MissingModel) as exc:
+                raise SkillError(str(exc)) from exc
+
+        index = self._camera_index(camera_index)
+        frame = await local_camera_pool.read_bgr(index)
+        observations = await asyncio.to_thread(engine.observe, frame)
+        if not observations:
+            return "I can't see anyone on the camera."
+
+        threshold = self.ctx.settings.security.match_threshold
+        known: list[str] = []
+        for obs in observations:
+            match = faces.match(obs.embedding, threshold=threshold)
+            if match is not None:
+                known.append(match[0])
+
+        count = len(observations)
+        people = "person" if count == 1 else "people"
+        if known:
+            names = ", ".join(sorted(set(known)))
+            recognised = f" I recognise {names}."
+        else:
+            recognised = "" if not faces.names() else " I don't recognise anyone."
+        return f"I can see {count} {people}.{recognised}"

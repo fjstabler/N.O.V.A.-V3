@@ -1,0 +1,12 @@
+{
+  "name": "N.O.V.A.",
+  "short_name": "N.O.V.A.",
+  "description": "Talk to N.O.V.A. from your phone, over Tailscale.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#05070d",
+  "theme_color": "#05070d",
+  "icons": [
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

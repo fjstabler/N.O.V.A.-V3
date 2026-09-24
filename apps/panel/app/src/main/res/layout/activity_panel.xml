@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/void_bg">
+
+    <WebView
+        android:id="@+id/web"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Shown only while the core is unreachable; the WebView underneath keeps
+         its last frame rather than flashing white. -->
+    <TextView
+        android:id="@+id/status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:padding="24dp"
+        android:textColor="@color/text_secondary"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
+    <!--
+      The way back out of a kiosk.
+
+      With no navigation bar and the home button pointed here, there would
+      otherwise be no route to the panel's own settings once it is paired —
+      including no way to correct a wrong address. Invisible, in a corner, and
+      behind a deliberate gesture, so it is there when it is needed and never
+      found by a passing elbow.
+    -->
+    <View
+        android:id="@+id/escapeHatch"
+        android:layout_width="72dp"
+        android:layout_height="72dp"
+        android:layout_gravity="top|start" />
+</FrameLayout>
