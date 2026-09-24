@@ -1714,20 +1714,11 @@
  * nothing overlaps once there are only 480 px of height to share.
  */
 @media (max-height: 560px) and (pointer: coarse), (max-height: 560px) and (max-width: 1100px) {
-  .clock { top: 0.9rem; left: 1.1rem; }
-  .clock__hm { font-size: 1.45rem; }
-  .clock__meta { font-size: 0.62rem; }
-
-  .conversation {
-    bottom: 5vh;
-    width: min(60ch, 88vw);
-    gap: 0.5rem;
-  }
-  .conversation__reply {
-    font-size: clamp(1rem, 2.6vh, 1.3rem);
-    line-height: 1.4;
-  }
-  .conversation__utterance { font-size: 0.72rem; }
+  /* The clock and the conversation are laid out under `:root[data-panel]` at
+     the end of this file, not here: on a panel the clock moves into the middle
+     of the Core, which the renderer has to know about too. Keeping both under
+     the attribute that JavaScript stamps is what stops the stylesheet and the
+     geometry drifting apart. */
 
   /* A fingertip, not a cursor. */
   .settings-trigger,
@@ -1891,4 +1882,122 @@
   color: #e9f0ff;
   font-size: 13px;
   cursor: pointer;
+}
+
+/* ------------------------------------------------- the clock, on a panel */
+
+/*
+ * On a wall panel the clock stops being a corner readout and becomes the
+ * subject: large, centred, sitting inside the Core while the rings turn around
+ * it. `lib/panel.ts` stamps `data-panel` on the root — the same module the
+ * renderer asks whether to leave a hole — so the layout and the geometry can
+ * never disagree about what a panel is.
+ *
+ * Nothing here may overlap anything else, which on a 480 px screen is a real
+ * constraint rather than a wish:
+ *
+ *   0    – 120 px   nothing (the Core's upper rings sweep through)
+ *   170  – 310 px   the clock, centred on 240
+ *   340  – 480 px   the conversation, and the corner controls
+ *
+ * The clock's box is capped rather than left to the font, because a long
+ * locale date or a 12-hour meridiem would otherwise widen it into the rings.
+ * `tests/panel-layout.test.ts` checks the capped box against every ring's
+ * ellipse rather than trusting that it looks right.
+ */
+:root[data-panel] .clock {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  /* Comfortably inside the 288 px hole the Core leaves. `panel-layout.test.ts`
+     checks this exact figure against every ring, so the two move together. */
+  max-width: 220px;
+  text-align: center;
+}
+
+/* The vertical accent rule is a corner device; centred, it would sit across
+   the middle of the Core. A short horizontal one under the time does the same
+   job of tying the readout to the rest of the interface. */
+:root[data-panel] .clock__rule {
+  width: 3.2rem;
+  height: 1px;
+  align-self: center;
+  order: 2;
+  background: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in srgb, var(--accent) 60%, transparent),
+    transparent
+  );
+}
+
+:root[data-panel] .clock--active .clock__rule {
+  background: linear-gradient(to right, transparent, var(--accent), transparent);
+}
+
+:root[data-panel] .clock__readout {
+  align-items: center;
+  gap: 0.2rem;
+}
+
+:root[data-panel] .clock__time {
+  justify-content: center;
+  gap: 0.3rem;
+}
+
+/* Bounded by height, not width: the hole is a circle in the middle of a 480 px
+   screen, so it is the vertical dimension that runs out first. */
+:root[data-panel] .clock__hm {
+  font-size: clamp(2.4rem, 12.5vh, 3.9rem);
+  font-weight: 200;
+  letter-spacing: 0.005em;
+}
+
+:root[data-panel] .clock__seconds {
+  font-size: clamp(0.85rem, 3.4vh, 1.15rem);
+}
+
+:root[data-panel] .clock__meta {
+  order: 3;
+  font-size: 0.6rem;
+  letter-spacing: 0.24em;
+  justify-content: center;
+}
+
+/*
+ * The conversation now shares the screen with a centred clock rather than
+ * sitting under an empty middle, so it is pinned to the lower third and given
+ * a ceiling. Without the cap a three-line reply grows upward into the clock —
+ * the one collision this layout exists to avoid, and the only one that is
+ * invisible until somebody actually asks a question.
+ */
+:root[data-panel] .conversation {
+  bottom: 3.5vh;
+  /* The ceiling is what keeps a long reply off the clock. 24vh of a 480 px
+     screen puts the highest a reply can start at 348, with the clock ending at
+     282 — about 66 px of air rather than the 42 the previous figure allowed.
+     The three-line clamp below usually binds first; this is the backstop for
+     when it does not. */
+  max-height: 24vh;
+  overflow: hidden;
+  width: min(58ch, 74vw);
+  gap: 0.35rem;
+}
+
+:root[data-panel] .conversation__reply {
+  font-size: clamp(0.95rem, 2.4vh, 1.2rem);
+  line-height: 1.35;
+  /* Three lines at most; the rest is on screen for a moment and then gone
+     anyway, and a wall of text on a panel is unreadable at arm's length. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+:root[data-panel] .conversation__utterance {
+  font-size: 0.66rem;
 }

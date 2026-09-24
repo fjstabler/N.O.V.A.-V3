@@ -18,6 +18,10 @@ import { FpsMeter } from './quality';
 export interface FallbackOptions {
   theme: string;
   coreScale: number;
+  /** Empty disc left at the centre — see `CoreOptions.hollow`. */
+  hollow?: number;
+  /** Smallest tilt a ring may take — see `CoreOptions.minTilt`. */
+  minTilt?: number;
   reduceMotion: boolean;
   onFps?: (fps: number) => void;
 }
@@ -163,6 +167,9 @@ export class FallbackRenderer {
     const accent = mix(this.palette.accent, this.palette.alert, alert);
     const accentAlt = mix(this.palette.accentAlt, this.palette.alert, alert);
     const scale = this.motion.scale.value * this.options.coreScale;
+    // Added after the scale multiply so the clear middle stays put while
+    // the Core breathes around it.
+    const hollow = (this.options.hollow ?? 0) * unit;
 
     ctx.fillStyle = '#04060d';
     ctx.fillRect(0, 0, width, height);
@@ -172,7 +179,7 @@ export class FallbackRenderer {
     ctx.globalCompositeOperation = 'lighter';
 
     // Outer halo.
-    const haloRadius = unit * 0.5 * scale;
+    const haloRadius = hollow + unit * 0.5 * scale;
     const halo = ctx.createRadialGradient(0, 0, 0, 0, 0, haloRadius);
     halo.addColorStop(0, css(accent, 0.16 + 0.12 * energy));
     halo.addColorStop(1, css(accent, 0));
@@ -184,8 +191,11 @@ export class FallbackRenderer {
     // Rings.
     for (let i = 0; i < RINGS.length; i += 1) {
       const ring = RINGS[i]!;
-      const radius = ring.radius * unit * scale;
-      const tilt = ring.tilt * (0.86 + 0.14 * Math.sin(this.clock * 0.21 + i * 1.7));
+      const radius = hollow + ring.radius * unit * scale;
+      const tilt = Math.max(
+        ring.tilt * (0.86 + 0.14 * Math.sin(this.clock * 0.21 + i * 1.7)),
+        this.options.minTilt ?? 0,
+      );
       const colour = mix(accent, accentAlt, i / Math.max(RINGS.length - 1, 1));
 
       ctx.save();
@@ -211,19 +221,22 @@ export class FallbackRenderer {
       ctx.restore();
     }
 
-    // Luminous centre.
-    const breath = 1 + 0.06 * Math.sin(this.clock * 0.55) * this.motion.breath.value;
-    const coreRadius =
-      this.motion.coreRadius.value * unit * scale * breath * (1 + 0.25 * this.motion.level.value);
-    const core = ctx.createRadialGradient(0, 0, 0, 0, 0, coreRadius);
-    core.addColorStop(0, `rgba(255, 255, 255, ${0.85 + 0.15 * this.motion.pulse.value})`);
-    core.addColorStop(0.35, css(accentAlt, 0.7));
-    core.addColorStop(1, css(accent, 0));
-    ctx.fillStyle = core;
-    ctx.shadowBlur = 0;
-    ctx.beginPath();
-    ctx.arc(0, 0, coreRadius, 0, Math.PI * 2);
-    ctx.fill();
+    // Luminous centre — unless the middle has been given away to the clock.
+    // The two occupy the same pixels, so only one of them can exist.
+    if (hollow <= 0) {
+      const breath = 1 + 0.06 * Math.sin(this.clock * 0.55) * this.motion.breath.value;
+      const coreRadius =
+        this.motion.coreRadius.value * unit * scale * breath * (1 + 0.25 * this.motion.level.value);
+      const core = ctx.createRadialGradient(0, 0, 0, 0, 0, coreRadius);
+      core.addColorStop(0, `rgba(255, 255, 255, ${0.85 + 0.15 * this.motion.pulse.value})`);
+      core.addColorStop(0.35, css(accentAlt, 0.7));
+      core.addColorStop(1, css(accent, 0));
+      ctx.fillStyle = core;
+      ctx.shadowBlur = 0;
+      ctx.beginPath();
+      ctx.arc(0, 0, coreRadius, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     ctx.restore();
 

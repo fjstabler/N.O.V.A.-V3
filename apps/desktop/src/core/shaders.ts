@@ -92,6 +92,11 @@ uniform float uPulse;        // transient flash, 0..1
 uniform float uTurbulence;   // plasma agitation
 uniform float uCoreRadius;
 uniform float uScale;
+// Radius of an empty disc at the centre. Everything is pushed outside it,
+// so a panel can put the clock in the middle of the Core without a ring
+// ever crossing the digits. Zero on a desktop, where the middle is the
+// luminous core itself.
+uniform float uHollow;
 uniform float uErrorMix;     // 0..1 blend toward the alert colour
 uniform float uBreath;       // slow idle breathing, -1..1
 uniform vec3  uAccent;
@@ -151,7 +156,7 @@ vec3 renderRings(vec2 p, float pixel) {
     vec4 style = uRingStyle[i];
 
     float angle;
-    float distance = ringField(p, ring.x * uScale, ring.z, ring.w, angle);
+    float distance = ringField(p, uHollow + ring.x * uScale, ring.z, ring.w, angle);
 
     // Arc masking: a ring may be a partial sweep rather than a full circle.
     float sweep = mod(angle - style.y + TAU, TAU);
@@ -185,6 +190,9 @@ vec3 renderCore(vec2 p) {
   float radius = length(p);
   float coreRadius = uCoreRadius * uScale * (1.0 + 0.06 * uBreath + 0.22 * uLevel);
 
+  // Guarded rather than relying on smoothstep: with edge0 == edge1 its
+  // result is undefined by the spec, and a hollow Core passes zero here.
+  if (coreRadius <= 0.0) return vec3(0.0);
   float falloff = 1.0 - smoothstep(0.0, coreRadius, radius);
   if (falloff <= 0.001) return vec3(0.0);
 
@@ -259,6 +267,7 @@ uniform float uEnergy;
 uniform float uScale;
 uniform float uLevel;
 uniform float uConverge;   // 0 = drifting, 1 = pulled toward the Core
+uniform float uHollow;     // empty middle; particles orbit outside it
 uniform float uDpr;
 
 out float vAlpha;
@@ -270,7 +279,7 @@ void main() {
 
   // Radial drift: particles breathe in and out slightly, out of phase.
   float wobble = sin(uTime * (0.5 + aSeed.z * 2.0) + aSeed.y * 3.0) * 0.035;
-  float radius = aSeed.x * uScale * (1.0 + wobble) * mix(1.0, 0.42, uConverge);
+  float radius = uHollow + aSeed.x * uScale * (1.0 + wobble) * mix(1.0, 0.42, uConverge);
   radius *= 1.0 + 0.18 * uLevel;
 
   // Tilt the orbital plane so particles pass in front of and behind the rings.

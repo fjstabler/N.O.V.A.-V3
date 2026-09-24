@@ -13,6 +13,7 @@ import { CoreRenderer } from '@/core/CoreRenderer';
 import { FallbackRenderer } from '@/core/FallbackRenderer';
 import { supportsWebGL2 } from '@/core/gl';
 import type { QualityName } from '@/core/quality';
+import { PANEL_HOLLOW, PANEL_MIN_TILT, panelCoreScale, watchPanel } from '@/lib/panel';
 import { useNova } from '@/state/store';
 
 type AnyRenderer = CoreRenderer | FallbackRenderer;
@@ -42,12 +43,28 @@ export function NovaCore(): JSX.Element {
   const rendererRef = useRef<AnyRenderer | null>(null);
   /** Set when WebGL turned out not to work, so the retry picks Canvas2D. */
   const [webglFailed, setWebglFailed] = useState(false);
+  /**
+   * On a wall panel the clock lives in the middle of the Core, so the Core
+   * leaves a hole for it and grows to keep its proportions. Watched rather
+   * than read once: the same bundle is served to a desktop window that can be
+   * resized across the boundary.
+   */
+  const [panel, setPanel] = useState(false);
+
+  useEffect(() => watchPanel(setPanel), []);
 
   const state = useNova((store) => store.state);
   const level = useNova((store) => store.level);
   const setFps = useNova((store) => store.setFps);
   const appearance = useNova((store) => store.settings?.appearance);
   const lastActiveAt = useNova((store) => store.lastActiveAt);
+
+  // Emptying the middle also enlarges the assembly, so the scale comes down
+  // a little to keep the outermost ring on a 480 px screen.
+  const setting = appearance?.core_scale ?? 1;
+  const hollow = panel ? PANEL_HOLLOW : 0;
+  const minTilt = panel ? PANEL_MIN_TILT : 0;
+  const coreScale = panel ? panelCoreScale(setting) : setting;
 
   // Probing WebGL support builds a throwaway context, so do it once.
   const canUseWebGL = useMemo(() => supportsWebGL2(), []);
@@ -70,13 +87,17 @@ export function NovaCore(): JSX.Element {
             theme,
             bloomIntensity: appearance?.bloom_intensity ?? 1,
             particleDensity: appearance?.particle_density ?? 1,
-            coreScale: appearance?.core_scale ?? 1,
+            coreScale,
+            hollow,
+            minTilt,
             reduceMotion: appearance?.reduce_motion ?? false,
             onFps: setFps,
           })
         : new FallbackRenderer(canvas, {
             theme,
-            coreScale: appearance?.core_scale ?? 1,
+            coreScale,
+            hollow,
+            minTilt,
             reduceMotion: appearance?.reduce_motion ?? false,
             onFps: setFps,
           });
@@ -151,10 +172,12 @@ export function NovaCore(): JSX.Element {
       quality: appearance.animation_quality as QualityName,
       bloomIntensity: appearance.bloom_intensity,
       particleDensity: appearance.particle_density,
-      coreScale: appearance.core_scale,
+      coreScale,
+      hollow,
+      minTilt,
       reduceMotion: appearance.reduce_motion,
     });
-  }, [appearance]);
+  }, [appearance, coreScale, hollow, minTilt]);
 
   // Keyed by backend so switching one mounts a new element. A canvas cannot
   // change context type, so reusing it across a switch guarantees a null

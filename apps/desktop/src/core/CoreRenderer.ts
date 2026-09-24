@@ -45,6 +45,12 @@ export interface CoreRendererOptions {
   bloomIntensity: number;
   particleDensity: number;
   coreScale: number;
+  /** Empty disc left at the centre, as a fraction of the smaller screen
+   *  dimension. A panel puts the clock there; a desktop leaves it 0. */
+  hollow?: number;
+  /** Smallest tilt a ring may take. A panel raises this so no ring is
+   *  flattened enough to cross the clock in the middle. */
+  minTilt?: number;
   reduceMotion: boolean;
   onQualityChange?: (quality: QualityName) => void;
   onFps?: (fps: number) => void;
@@ -379,8 +385,10 @@ export class CoreRenderer {
       this.ringData[i * 4 + 0] = ring.radius * scale;
       this.ringData[i * 4 + 1] = ring.thickness;
       // Tilt oscillates slowly so the assembly never settles into a fixed pose.
-      this.ringData[i * 4 + 2] =
-        ring.tilt * (0.86 + 0.14 * Math.sin(this.clock * 0.21 + i * 1.7));
+      this.ringData[i * 4 + 2] = Math.max(
+        ring.tilt * (0.86 + 0.14 * Math.sin(this.clock * 0.21 + i * 1.7)),
+        this.options.minTilt ?? 0,
+      );
       this.ringData[i * 4 + 3] = this.ringAngles[i]!;
 
       this.ringStyle[i * 4 + 0] = ring.brightness * (0.55 + 0.75 * this.motion.energy.value);
@@ -407,7 +415,11 @@ export class CoreRenderer {
     this.sceneProgram.float('uLevel', this.motion.level.value);
     this.sceneProgram.float('uPulse', this.motion.pulse.value);
     this.sceneProgram.float('uTurbulence', this.motion.turbulence.value);
-    this.sceneProgram.float('uCoreRadius', this.motion.coreRadius.value);
+    const hollow = this.options.hollow ?? 0;
+    // The luminous centre and the hollow are the same piece of screen, so
+    // only one of them can exist.
+    this.sceneProgram.float('uCoreRadius', hollow > 0 ? 0 : this.motion.coreRadius.value);
+    this.sceneProgram.float('uHollow', hollow);
     this.sceneProgram.float('uScale', this.motion.scale.value * this.options.coreScale);
     this.sceneProgram.float('uErrorMix', this.motion.alert.value);
     this.sceneProgram.float(
@@ -434,6 +446,7 @@ export class CoreRenderer {
       this.particleProgram.float('uScale', this.motion.scale.value * this.options.coreScale);
       this.particleProgram.float('uLevel', this.motion.level.value);
       this.particleProgram.float('uConverge', this.motion.converge.value);
+      this.particleProgram.float('uHollow', this.options.hollow ?? 0);
       this.particleProgram.float('uDpr', Math.min(window.devicePixelRatio || 1, this.tier.maxDpr));
       this.particleProgram.vec3('uAccent', this.palette.accent);
       this.particleProgram.vec3('uAccentAlt', this.palette.accentAlt);
