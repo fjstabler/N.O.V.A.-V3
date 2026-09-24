@@ -37,7 +37,16 @@ import {
   SCENE_FRAGMENT,
 } from './shaders';
 import { FpsMeter, FrameWatchdog, lowerTier, tierFor, type QualityName, type QualityTier } from './quality';
-import { CoreMotion, PALETTES, PROFILES, RINGS, paletteFor, profileFor, type Palette } from './visual';
+import {
+  CoreMotion,
+  PALETTES,
+  PROFILES,
+  RINGS,
+  idleClockFactor,
+  paletteFor,
+  profileFor,
+  type Palette,
+} from './visual';
 
 export interface CoreRendererOptions {
   quality: QualityName;
@@ -339,19 +348,11 @@ export class CoreRenderer {
     this.motion.step(profile, this.level, dt);
 
     // Reduced motion slows the clock rather than freezing it: the spec asks for
-    // motion that never stops, and a still Core would read as a crash.
-    //
-    // The plasma inside the core (and the "shine lines" that pattern reads as)
-    // animates off this same clock, not off `spin` — spin only ever drove the
-    // rings. Without also slowing the clock here, the rings would settle into
-    // their slow idle-dimmed turn while the plasma churned on at its ordinary
-    // rate, which looks like two different speeds fighting each other rather
-    // than one thing quietly settling down. Scaling the clock by how far spin
-    // has already sprung toward its idle-dimmed target keeps both in lockstep
-    // through the whole transition, not just at the two endpoints.
-    const idleClockFactor =
-      this.state === 'idle' ? this.motion.spin.value / PROFILES.idle.spin : 1;
-    this.clock += dt * (this.options.reduceMotion ? 0.35 : 1) * idleClockFactor;
+    // motion that never stops, and a still Core would read as a crash. The
+    // settle slows it too — see `idleClockFactor`, which is why the plasma eases
+    // off at the same pace the rings do.
+    this.clock +=
+      dt * (this.options.reduceMotion ? 0.35 : 1) * idleClockFactor(this.state, this.motion.spin.value);
 
     this.advanceRings(dt);
     this.render();

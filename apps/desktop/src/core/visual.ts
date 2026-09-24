@@ -105,6 +105,25 @@ export function profileFor(state: NovaState, idleDimmed: boolean): CoreProfile {
 }
 
 /**
+ * How fast the Core's internal clock should run, given the state and where the
+ * spin spring currently is.
+ *
+ * `spin` turns the rings and nothing else. Everything else that moves — the
+ * plasma in the middle, the slow tilt oscillation, dash travel — runs off the
+ * clock, so slowing only `spin` would leave the rings easing into their settled
+ * crawl while the rest churned on at full rate. That does not read as one thing
+ * settling down; it reads as two speeds arguing.
+ *
+ * Taking the factor from how far the spring has *already* travelled, rather
+ * than from the target, keeps the two in step through the whole transition and
+ * not merely at both ends. Outside idle it is 1: no other state has a settled
+ * form to ease into.
+ */
+export function idleClockFactor(state: NovaState, spin: number): number {
+  return state === 'idle' ? spin / PROFILES.idle.spin : 1;
+}
+
+/**
  * A critically damped spring.
  *
  * Chosen over an easing curve because it is interruptible: a state change

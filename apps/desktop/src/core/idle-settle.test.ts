@@ -13,11 +13,60 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { IDLE_DIMMED, PROFILES, RINGS, profileFor } from '@/core/visual';
+import type { NovaState } from '@protocol';
+import { CoreMotion, IDLE_DIMMED, PROFILES, RINGS, idleClockFactor, profileFor } from '@/core/visual';
+import type { CoreProfile } from '@/core/visual';
 import { PANEL_HOLLOW, PANEL_MIN_TILT, PANEL_SCALE_RANGE, panelCoreScale } from '@/lib/panel';
 
 const UNIT = 480; // the short side of an Echo Show 5
 const CLOCK = { halfWidth: 220 / 2, halfHeight: 84 / 2 };
+
+const FRAME = 1 / 60;
+
+interface Run {
+  /** Total angle every ring turned through, radians, ignoring direction. */
+  turned: number;
+  /** How far the internal clock advanced — the plasma, tilt and dash travel. */
+  clock: number;
+  /** Where the spin spring ended up. */
+  spin: number;
+  /** The largest change in spin between two consecutive frames. */
+  biggestJump: number;
+}
+
+/**
+ * Run the Core's motion for `seconds`, exactly as the renderers' frame loops
+ * do, and report what actually moved.
+ *
+ * Driving the real `CoreMotion` matters. Comparing the two profiles' `spin`
+ * numbers only says the constants differ; it says nothing about whether the
+ * spring ever arrives, and a spring that never reached its target would leave
+ * the Core turning at very nearly its awake rate forever while every
+ * constants-only test stayed green.
+ */
+function run(profile: CoreProfile, seconds: number, state: NovaState = 'idle'): Run {
+  const motion = new CoreMotion();
+  motion.snapTo(PROFILES.idle); // it has been sitting idle; that is the start.
+
+  let turned = 0;
+  let clock = 0;
+  let biggestJump = 0;
+  let previous = motion.spin.value;
+
+  for (let t = 0; t < seconds; t += FRAME) {
+    motion.step(profile, 0, FRAME);
+    biggestJump = Math.max(biggestJump, Math.abs(motion.spin.value - previous));
+    previous = motion.spin.value;
+
+    // Mirrors `advanceRings` in CoreRenderer and the same line in
+    // FallbackRenderer: angles accumulate, they are never taken from the wall
+    // clock, which is what makes a spin change ease in instead of jump.
+    for (const ring of RINGS) turned += Math.abs(ring.speed * motion.spin.value * FRAME);
+    clock += FRAME * idleClockFactor(state, motion.spin.value);
+  }
+
+  return { turned, clock, spin: motion.spin.value, biggestJump };
+}
 
 describe('settling after fifteen minutes', () => {
   it('uses the dimmed profile once idle and dimmed', () => {
@@ -46,6 +95,67 @@ describe('settling after fifteen minutes', () => {
       expect(profileFor(state, true)).toBe(PROFILES[state]);
     },
   );
+});
+
+describe('the rings turning slower once settled', () => {
+  /* The settle is not only a dimming. The rings drop from spin 0.55 to 0.12 —
+     a bit under a fifth of the speed — and that is the part you notice from
+     across a room, because a slow turn reads as "resting" where a dim one just
+     reads as "the screen went down a notch". */
+
+  it('turns the rings roughly a fifth as far over a minute', () => {
+    const awake = run(PROFILES.idle, 60);
+    const settled = run(IDLE_DIMMED, 60);
+    const ratio = settled.turned / awake.turned;
+
+    expect(ratio).toBeLessThan(0.3);
+    // And not *stopped*: a frozen Core reads as a crash, which is the same
+    // reason reduced motion slows the clock rather than halting it.
+    expect(ratio).toBeGreaterThan(0.1);
+    expect(settled.turned).toBeGreaterThan(0);
+  });
+
+  it('gets there on a spring rather than by snapping', () => {
+    const settled = run(IDLE_DIMMED, 60);
+
+    // The spring has to actually arrive — otherwise the rings would keep
+    // turning at nearly their awake rate and every constants-only check would
+    // still pass.
+    expect(settled.spin).toBeCloseTo(IDLE_DIMMED.spin, 2);
+    // A sixtieth of a second may not swallow a tenth of the whole change; the
+    // slowdown should be visible as a slowdown, not as a gear change.
+    expect(settled.biggestJump).toBeLessThan((PROFILES.idle.spin - IDLE_DIMMED.spin) * 0.1);
+  });
+
+  it('slows the plasma by the same factor as the rings, not separately', () => {
+    /* `spin` turns the rings and nothing else. The plasma, the tilt
+       oscillation and the dash travel all run off the internal clock, so
+       without `idleClockFactor` the rings would ease down to a crawl while the
+       middle carried on churning at full speed — two speeds arguing rather
+       than one thing settling. */
+    const settled = run(IDLE_DIMMED, 60);
+    const awake = run(PROFILES.idle, 60);
+
+    const rings = settled.turned / awake.turned;
+    const plasma = settled.clock / awake.clock;
+
+    expect(plasma).toBeCloseTo(rings, 3);
+  });
+
+  it.each(['listening', 'thinking', 'speaking'] as const)(
+    'runs the clock at full rate while %s, whatever the spring is doing',
+    (state) => {
+      // Only idle has a settled form to ease into. Scaling another state's
+      // clock by a ratio against idle's spin would speed `thinking` *up* —
+      // 2.4/0.55 — for no reason at all.
+      expect(idleClockFactor(state, PROFILES[state].spin)).toBe(1);
+      expect(idleClockFactor(state, 0.01)).toBe(1);
+    },
+  );
+
+  it('leaves the clock alone while idle and awake', () => {
+    expect(idleClockFactor('idle', PROFILES.idle.spin)).toBe(1);
+  });
 });
 
 describe('the clock while the Core is settled', () => {

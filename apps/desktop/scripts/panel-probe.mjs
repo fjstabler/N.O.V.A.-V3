@@ -41,6 +41,50 @@ const server = createServer(async (req, res) => {
     res.end(body);
   } catch { res.writeHead(404); res.end('no'); }
 });
+
+// A core, as far as the page is concerned.
+//
+// Without one the shell sits in `booting` forever, and `booting` is not a
+// state the settle applies to — so the whole fifteen-minute behaviour was
+// unreachable from here and had to be taken on the unit tests' word. Twenty
+// lines of fake server buys the real thing: a page that reaches `idle`,
+// settles, and can be woken up again.
+//
+// The three sync requests are answered with errors on purpose. The store logs
+// the failure and keeps its defaults, which is exactly what the probe has
+// always rendered — feeding it invented settings would mean measuring a
+// configuration nobody runs.
+let core = null;
+try {
+  const { WebSocketServer } = await import('ws');
+  const wss = new WebSocketServer({ noServer: true });
+  const envelope = (kind, topic, payload, id) =>
+    JSON.stringify({ v: 1, kind, topic, id: id ?? `p${Math.random().toString(36).slice(2)}`,
+                     ts: Date.now(), payload });
+
+  wss.on('connection', (socket) => {
+    core = socket;
+    socket.send(envelope('hello', 'hello', { version: 1 }));
+    socket.send(envelope('event', 'state.changed', { state: 'idle' }));
+    socket.on('message', (raw) => {
+      let request;
+      try { request = JSON.parse(raw.toString()); } catch { return; }
+      if (request.kind !== 'request') return;
+      socket.send(envelope('error', request.topic,
+        { code: 'nova.unavailable', message: 'probe core has no settings' }, request.id));
+    });
+  });
+  server.on('upgrade', (req, socket, head) =>
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req)));
+} catch {
+  console.log('[probe] no `ws` module — the settle section will stay in booting.');
+}
+
+/** Push a state change, the way the core would. */
+const setCoreState = (state) =>
+  core?.send(JSON.stringify({ v: 1, kind: 'event', topic: 'state.changed',
+                              id: `s${Date.now()}`, ts: Date.now(), payload: { state } }));
+
 await new Promise((r) => server.listen(4173, r));
 
 const browser = await chromium.launch({
@@ -189,8 +233,11 @@ console.log('wrote panel.png');
 // shortened before the page loads. Not to milliseconds: the awake sample has
 // to happen before it fires, or both readings are of the same state and the
 // comparison says nothing. That is exactly what the first version of this did.
-const SETTLE_AFTER_MS = 4000;
+const SETTLE_AFTER_MS = 15_000;
+/** How long the springs need to arrive after a state change. */
+const SPRING_SETTLE_MS = 3000;
 
+await page.close(); // so the fake core's latest connection is the one below
 const settled = await browser.newPage({ viewport: { width: 960, height: 480 }, deviceScaleFactor: 1 });
 await settled.addInitScript((after) => {
   localStorage.setItem('nova.bridge.token', 'x');
@@ -200,20 +247,92 @@ await settled.addInitScript((after) => {
 await settled.goto('http://127.0.0.1:4173/app/', { waitUntil: 'domcontentloaded' });
 await settled.evaluate(() => document.fonts.ready);
 
-/** Whole-screen light, to tell an awake Core from a settled one. */
+/**
+ * Whole-screen light, to tell an awake Core from a settled one.
+ *
+ * `light` is what the Core itself emits: the backdrop is a flat #04060d, and
+ * counting it drags every comparison toward 1:1 — most of the screen is
+ * backdrop, so a real 20% drop in the Core reads as 4% once it is averaged in.
+ */
+const BACKDROP = 13; // max channel of #04060d
+
 const brightness = () =>
-  settled.evaluate(() => {
+  settled.evaluate((floor) => {
     const canvas = document.querySelector('canvas.nova-core');
     const { data } = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
     let lit = 0;
-    let total = 0;
+    let light = 0;
     for (let i = 0; i < data.length; i += 4) {
       const v = Math.max(data[i], data[i + 1], data[i + 2]);
-      total += v;
+      if (v > floor) light += v - floor;
       if (v > 60) lit += 1;
     }
-    return { lit, mean: +(total / (data.length / 4)).toFixed(1) };
-  });
+    return { lit, light: Math.round(light / 1000) };
+  }, BACKDROP);
+
+/**
+ * How fast the picture is actually moving, in change per second.
+ *
+ * The settle is not only a dimming — the rings drop from spin 0.55 to 0.12 —
+ * and a brightness count cannot see the difference between a Core that has
+ * slowed down and one that has merely gone dim. This can: it measures how much
+ * the picture changes between one frame and the next.
+ *
+ * Every frame is divided by its own mean first. Without that the measurement
+ * would fall simply because the Core got darker, and would report a slowdown
+ * that had not happened — the exact mistake the brightness figures alone
+ * invite. Normalised, a uniformly dimmer Core moving at the same speed scores
+ * the same, and only a genuine change of pace moves the number.
+ */
+const motionRate = (frames) =>
+  settled.evaluate(async (count) => {
+    const canvas = document.querySelector('canvas.nova-core');
+    const ctx = canvas.getContext('2d');
+    const STRIDE = 2; // every other pixel; the rings are far wider than that
+
+    const sample = () => {
+      const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const out = new Float32Array(Math.ceil(data.length / 4 / STRIDE));
+      let total = 0;
+      for (let i = 0, n = 0; n < out.length; i += 4 * STRIDE, n += 1) {
+        const v = Math.max(data[i], data[i + 1], data[i + 2]);
+        out[n] = v;
+        total += v;
+      }
+      const mean = total / out.length || 1;
+      for (let n = 0; n < out.length; n += 1) out[n] /= mean;
+      return out;
+    };
+
+    const rates = [];
+    let previous = sample();
+    let last = performance.now();
+    for (let f = 0; f < count; f += 1) {
+      await new Promise((r) => requestAnimationFrame(() => r()));
+      const now = performance.now();
+      const current = sample();
+      let diff = 0;
+      for (let n = 0; n < current.length; n += 1) diff += Math.abs(current[n] - previous[n]);
+      rates.push((diff / current.length) * (1000 / Math.max(now - last, 1)));
+      previous = current;
+      last = now;
+    }
+
+    // The median, not the mean: a dropped frame doubles one interval and no
+    // amount of averaging hides it.
+    rates.sort((a, b) => a - b);
+    return +rates[Math.floor(rates.length / 2)].toFixed(4);
+  }, frames);
+
+/** Wait for the shell to report a state, or give up. */
+const waitForState = async (want, ms) => {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    if ((await settled.evaluate(() => document.documentElement.dataset.state)) === want) return true;
+    await settled.waitForTimeout(100);
+  }
+  return false;
+};
 
 /**
  * The brightest thing the Core puts under the clock, across many frames.
@@ -297,19 +416,39 @@ const underClock = (frames) =>
     };
   }, { count: frames, ringFraction: RING_FRACTION, glowFloor: GLOW_FLOOR });
 
-await settled.waitForTimeout(1800);
+const reachedIdle = await waitForState('idle', 8000);
+// Long enough for the springs to arrive. Every value is sprung, so a sample
+// taken straight after the state change is still on its way up out of
+// `booting` — which is dimmer and smaller than idle, so an early baseline
+// understates the awake Core and flatters the settle. Six hundred ms was not
+// enough, and the figures it produced said the Core barely dimmed at all.
+await settled.waitForTimeout(SPRING_SETTLE_MS);
 const awake = await brightness();
-const awakeUnder = await underClock(90);
+const awakeMotion = await motionRate(60);
+const awakeUnder = await underClock(60);
 
-await settled.waitForTimeout(SETTLE_AFTER_MS + 5000);
+// Past the (shortened) fifteen minutes, plus a moment for the springs.
+await settled.waitForTimeout(SETTLE_AFTER_MS + 6000);
 const quiet = await brightness();
-const quietUnder = await underClock(90);
+const quietMotion = await motionRate(60);
+const quietUnder = await underClock(60);
+
+// And back: the other half of the feature is that it wakes up again. A turn
+// starting is any state that is not idle, which is what resets the timer.
+setCoreState('listening');
+await settled.waitForTimeout(400);
+setCoreState('idle');
+await settled.waitForTimeout(SPRING_SETTLE_MS);
+const woken = await brightness();
+const wokenMotion = await motionRate(60);
 
 const observedState = await settled.evaluate(() => document.documentElement.dataset.state);
 
-const report = (label, whole, under) => {
+const report = (label, whole, motion, under) => {
+  console.log(`  ${label.padEnd(9)} light ${String(whole.light).padStart(5)}k  ` +
+              `lit ${String(whole.lit).padStart(5)}  motion ${motion}/s`);
+  if (!under) return;
   const area = under.spread ? (under.spread.r - under.spread.l + 1) * (under.spread.b - under.spread.t + 1) : 0;
-  console.log(`  ${label.padEnd(9)}`, JSON.stringify(whole));
   console.log(
     `    under the clock: peak ${under.peakUnder} against a ring at ${under.peakAnywhere}; ` +
       `${under.ringPixels} ring-bright pixel(s) over ${under.frames} frames`,
@@ -322,8 +461,9 @@ const report = (label, whole, under) => {
 };
 
 console.log('\nIDLE SETTLE');
-report('awake', awake, awakeUnder);
-report('settled', quiet, quietUnder);
+report('awake', awake, awakeMotion, awakeUnder);
+report('settled', quiet, quietMotion, quietUnder);
+report('woken', woken, wokenMotion, null);
 // What is actually behind the clock, to look at rather than to total up.
 await settled.evaluate(() => { document.querySelector('.clock').style.visibility = 'hidden'; });
 await settled.waitForTimeout(200);
@@ -332,17 +472,20 @@ const bare = await cdp2.send('Page.captureScreenshot', { format: 'png', fromSurf
 await (await import('node:fs/promises')).writeFile('panel-no-clock.png', Buffer.from(bare.data, 'base64'));
 console.log('  wrote panel-no-clock.png');
 console.log('  assistant state:', observedState);
-if (observedState !== 'idle') {
-  // Not a failure, and worth saying out loud rather than reporting a dim that
-  // never happened. The settled profile is chosen only while the assistant is
-  // `idle`, and a page with no core to talk to never leaves `booting` — so the
-  // end of this chain cannot be reached here. The selection itself is covered
-  // by `src/core/idle-settle.test.ts`; what this run does show is that the
-  // clock stays clear whatever the Core is doing.
-  console.log('  (no core to connect to, so it stays in', observedState + ' —');
-  console.log('   the dim only applies while idle. See src/core/idle-settle.test.ts.)');
+if (!reachedIdle) {
+  // The settled profile is only ever chosen while the assistant is `idle`, so
+  // without that this section measured nothing. Say so rather than reporting a
+  // settle that never happened.
+  console.log('  never reached idle — nothing below was measured in the settled state.');
 } else {
-  console.log('  it settles:', quiet.lit < awake.lit * 0.9 ? 'YES' : 'NO');
+  const pc = (a, b) => `${Math.round((b / a) * 100)}%`;
+  console.log(`  dims:   light ${awake.light}k -> ${quiet.light}k (${pc(awake.light, quiet.light)})`,
+              quiet.light < awake.light * 0.9 ? 'YES' : 'NO');
+  console.log(`  slows:  motion ${awakeMotion} -> ${quietMotion} (${pc(awakeMotion, quietMotion)}/s),`,
+              `spin target ${Math.round((0.12 / 0.55) * 100)}%`,
+              quietMotion < awakeMotion * 0.6 ? 'YES' : 'NO');
+  console.log(`  wakes:  motion back to ${wokenMotion}/s (${pc(awakeMotion, wokenMotion)} of awake)`,
+              wokenMotion > awakeMotion * 0.8 ? 'YES' : 'NO');
 }
 await settled.close();
 await browser.close();

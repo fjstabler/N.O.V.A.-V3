@@ -12,7 +12,7 @@
  */
 
 import type { NovaState } from '@protocol';
-import { CoreMotion, PROFILES, RINGS, paletteFor, profileFor, type Palette } from './visual';
+import { CoreMotion, PROFILES, RINGS, idleClockFactor, paletteFor, profileFor, type Palette } from './visual';
 import { FpsMeter } from './quality';
 
 export interface FallbackOptions {
@@ -137,12 +137,8 @@ export class FallbackRenderer {
     const profile = profileFor(this.state, this.idleDimmed);
     this.motion.step(profile, this.level, dt);
 
-    // See CoreRenderer's frame() for why this is scaled the same way: the
-    // clock drives more than just ring rotation (tilt oscillation, dash
-    // travel), and all of it should settle at the same pace as the rings do.
-    const idleClockFactor =
-      this.state === 'idle' ? this.motion.spin.value / PROFILES.idle.spin : 1;
-    this.clock += dt * (this.options.reduceMotion ? 0.35 : 1) * idleClockFactor;
+    this.clock +=
+      dt * (this.options.reduceMotion ? 0.35 : 1) * idleClockFactor(this.state, this.motion.spin.value);
 
     for (let i = 0; i < RINGS.length; i += 1) {
       this.ringAngles[i] =
