@@ -380,7 +380,13 @@
  * The Core sits centred and takes roughly the middle 60% of the viewport, so
  * each slot hugs a corner or the mid-right — none of them cover it. The offset
  * from the screen edge is large enough that a surface never bleeds under the
- * clock (top-left) or the notification stack (top-right corner of the panel).
+ * clock or the notification stack.
+ *
+ * On a desktop the clock is in the top-left corner, which is what the offsets
+ * were originally drawn around. On a panel it is in the middle of the Core, so
+ * the width is cut there instead — see the panel block at the end of this
+ * file. Measured by `scripts/panel-probe.mjs` rather than assumed: every one
+ * of these four slots overlapped the centred clock by 63 px before it was.
  */
 .surface--slot-top-right {
   top: max(4rem, 6vh);
@@ -1433,7 +1439,16 @@
   backdrop-filter: blur(26px) saturate(150%);
   -webkit-backdrop-filter: blur(26px) saturate(150%);
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
-  animation: rise var(--duration) var(--ease);
+  /* Not `rise`: a keyframe that sets `transform` replaces the whole
+     property, so the shared one wiped the centring above for the length of
+     the entrance — the console jumped half its width to the right, hung off
+     the screen edge, and snapped back when the animation ended. */
+  animation: rise-centred var(--duration) var(--ease);
+}
+
+@keyframes rise-centred {
+  from { opacity: 0; transform: translate(-50%, 10px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
 }
 
 .console__prompt {
@@ -1767,8 +1782,17 @@
 
   .settings__content { padding: 1rem 1.1rem 1.5rem; }
 
+  /*
+   * Narrower than a desktop surface in proportion, not wider.
+   *
+   * A slot hugs the left or right edge, so what decides whether it reaches the
+   * clock is its width. At 52vw all four slots ran 63 px into a centred clock;
+   * 34vw leaves about 27 px of clear screen on either side. The cost is a
+   * smaller camera view, which is the right way round — a surface is summoned
+   * and goes away again, and the clock is the thing that is always there.
+   */
   .surface {
-    width: min(26rem, 52vw);
+    width: min(20.5rem, 34vw);
     max-height: 84vh;
   }
   .surface__card { max-height: 84vh; }
@@ -1776,7 +1800,19 @@
      transform, and giving it a new `top` would drag it off-centre instead. */
   .surface--slot-top-right { top: max(3rem, 8vh); }
 
-  .notifications { width: min(19rem, 46vw); }
+  /*
+   * Capped, because the stack grows and the screen does not.
+   *
+   * `max_visible` defaults to four and goes to ten. Anchored top-centre the
+   * stack grows downward into the clock, and a 480 px screen cannot show ten
+   * cards anyway. The other four anchors are clear of the centre horizontally
+   * whatever their height, but the cap costs them nothing.
+   */
+  .notifications {
+    width: min(19rem, 46vw);
+    max-height: 34vh;
+    overflow: hidden;
+  }
   .notifications--top-right,
   .notifications--top-left,
   .notifications--top-center { top: 0.9rem; }

@@ -104,6 +104,74 @@ const probe = await page.evaluate(async () => {
 });
 console.log('CORE PIXELS UNDER THE CLOCK', JSON.stringify(probe));
 
+
+// ---------------------------------------------------------------- overlays
+//
+// Everything that can appear over the idle screen, measured against the clock.
+// The clock used to live in the top-left corner and every one of these was
+// positioned on the assumption that the middle was empty — the surface slots
+// say so in a comment. Moving the clock to the centre invalidated all of it at
+// once, and only some of them collide, which is exactly the sort of thing that
+// ships unnoticed because it needs a notification or a camera view to show up.
+const OVERLAYS = [
+  // Ten is `notifications.max_visible`'s ceiling, not a typical stack.
+  ['notifications top-center', 'notifications notifications--top-center', 10],
+  ['notifications top-right', 'notifications notifications--top-right', 10],
+  ['notifications bottom-right', 'notifications notifications--bottom-right', 10],
+  ['notifications bottom-left', 'notifications notifications--bottom-left', 10],
+  ['surface right-mid', 'surface surface--slot-right-mid surface--is-in', 0],
+  ['surface top-right', 'surface surface--slot-top-right surface--is-in', 0],
+  ['surface bottom-right', 'surface surface--slot-bottom-right surface--is-in', 0],
+  ['surface bottom-left', 'surface surface--slot-bottom-left surface--is-in', 0],
+  ['console', 'console', 0],
+];
+
+const collisions = await page.evaluate((overlays) => {
+  const clock = document.querySelector('.clock').getBoundingClientRect();
+  const overlap = (a, b) => {
+    const w = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+    const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+    return w > 0 && h > 0 ? { w: Math.round(w), h: Math.round(h) } : null;
+  };
+
+  const results = [];
+  for (const [label, classes, cards] of overlays) {
+    const el = document.createElement('div');
+    el.className = classes;
+    if (cards) {
+      el.innerHTML = Array.from({ length: cards }, (_, i) =>
+        `<div class="notification notification--info"><div class="notification__rule"></div>` +
+        `<div class="notification__body"><div class="notification__title">Card spend ${i}</div>` +
+        `<div class="notification__text">50 pounds at Currys. 940 pounds left.</div></div></div>`,
+      ).join('');
+    } else if (classes.startsWith('surface')) {
+      el.innerHTML =
+        '<div class="surface__card"><div class="surface__bar">' +
+        '<span class="surface__title">Front door</span></div>' +
+        '<div class="surface__placeholder" style="height:190px">camera</div></div>';
+    } else {
+      el.innerHTML = '<input class="console__input" placeholder="Ask N.O.V.A." />';
+    }
+    document.body.appendChild(el);
+    const box = el.getBoundingClientRect();
+    results.push({
+      label,
+      box: { l: Math.round(box.left), t: Math.round(box.top),
+             r: Math.round(box.right), b: Math.round(box.bottom) },
+      hits: overlap(clock, box),
+    });
+    el.remove();
+  }
+  return { clock: { l: Math.round(clock.left), t: Math.round(clock.top),
+                    r: Math.round(clock.right), b: Math.round(clock.bottom) }, results };
+}, OVERLAYS);
+
+console.log('\nCLOCK', JSON.stringify(collisions.clock));
+for (const r of collisions.results) {
+  console.log(r.hits ? `  OVERLAP  ${r.label.padEnd(28)} by ${r.hits.w}x${r.hits.h}px  ${JSON.stringify(r.box)}`
+                     : `  clear    ${r.label.padEnd(28)} ${JSON.stringify(r.box)}`);
+}
+
 const cdp = await page.context().newCDPSession(page);
 const shot = await cdp.send('Page.captureScreenshot', { format: 'png', fromSurface: false });
 await (await import('node:fs/promises')).writeFile(
